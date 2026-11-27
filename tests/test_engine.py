@@ -270,12 +270,12 @@ class TestPanelCraftEngine(unittest.TestCase):
         from backend.updater import build_github_links
         from backend.version import get_app_version, is_newer_version, read_changelog_entries
 
-        self.assertEqual(get_app_version(), "0.7.0")
-        self.assertTrue(is_newer_version("0.8.0", "0.7.0"))
-        self.assertFalse(is_newer_version("0.7.0", "0.7.0"))
-        self.assertGreaterEqual(len(read_changelog_entries()), 7)
+        self.assertEqual(get_app_version(), "0.8.0")
+        self.assertTrue(is_newer_version("0.9.0", "0.8.0"))
+        self.assertFalse(is_newer_version("0.8.0", "0.8.0"))
+        self.assertGreaterEqual(len(read_changelog_entries()), 8)
 
-        links = build_github_links("myorg/panelcraft-ai", "0.7.0")
+        links = build_github_links("myorg/panelcraft-ai", "0.8.0")
         self.assertIn("issues/new", links["new_bug_url"])
         self.assertIn("discussions", links["discussions_url"])
 
@@ -532,6 +532,114 @@ class TestPanelCraftEngine(unittest.TestCase):
 
             self.assertTrue(delete_custom_macro("EMA-TEST01", db_path=db))
             self.assertEqual(len(list_custom_macros(tenant_id="TENANT-KBAT", db_path=db)), 0)
+
+    def test_v08_mcp_jsonrpc_tools_resources_prompts_and_stdio(self) -> None:
+        import json
+        import subprocess
+        import sys
+        from backend.mcp_server import get_mcp_server_metadata, handle_mcp_jsonrpc
+
+        # 1. Protocol initialize, ping, notifications, discovery
+        init_res = handle_mcp_jsonrpc(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}}
+        )
+        assert init_res is not None
+        self.assertEqual(init_res["result"]["protocolVersion"], "2025-03-26")
+        self.assertEqual(init_res["result"]["serverInfo"]["name"], "panelcraft-ai-mcp")
+        self.assertIsNone(handle_mcp_jsonrpc({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+
+        meta = get_mcp_server_metadata("http://localhost:8000")
+        self.assertEqual(meta["tools_count"], 12)
+        self.assertGreaterEqual(meta["resources_count"], 7)
+        self.assertEqual(meta["prompts_count"], 3)
+
+        # 2. tools/list & tools/call (design summary + verification + EPLAN AML/EMA export + ST interlock)
+        tools_res = handle_mcp_jsonrpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        assert tools_res is not None
+        tool_names = {t["name"] for t in tools_res["result"]["tools"]}
+        self.assertIn("get_panel_design_summary", tool_names)
+        self.assertIn("export_engineering_artifact", tool_names)
+
+        sum_res = handle_mcp_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "get_panel_design_summary", "arguments": {"project_id": "PRJ-BAT01"}},
+            }
+        )
+        assert sum_res is not None
+        self.assertFalse(sum_res["result"]["isError"])
+        sc = sum_res["result"]["structuredContent"]
+        self.assertGreater(sc["iec60909_short_circuit"]["ik3_main_ka"], 1.0)
+        self.assertGreater(sc["bom"]["total_krw"], 1000000)
+
+        exp_res = handle_mcp_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {"name": "export_engineering_artifact", "arguments": {"project_id": "PRJ-BAT01", "format": "eplan_ema"}},
+            }
+        )
+        assert exp_res is not None
+        self.assertFalse(exp_res["result"]["isError"])
+        self.assertIn("<EplanPxfRoot", exp_res["result"]["structuredContent"]["content"])
+
+        # 3. RBAC enforcement on mutating MCP tool (viewer must be denied)
+        viewer_user = {"name": "Client Viewer", "role": "viewer"}
+        denied_res = handle_mcp_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {
+                    "name": "add_load_unit",
+                    "arguments": {"project_id": "PRJ-BAT01", "tag": "X1", "name": "Blocked", "load_type": "motor_dol"},
+                },
+            },
+            user=viewer_user,
+        )
+        assert denied_res is not None
+        self.assertTrue(denied_res["result"]["isError"])
+        self.assertIn("403", denied_res["result"]["content"][0]["text"])
+
+        # 4. Resources & Prompts
+        res_read = handle_mcp_jsonrpc(
+            {"jsonrpc": "2.0", "id": 6, "method": "resources/read", "params": {"uri": "panelcraft://projects/PRJ-BAT01/eplan.aml"}}
+        )
+        assert res_read is not None
+        self.assertIn("<CAEXFile", res_read["result"]["contents"][0]["text"])
+
+        prompt_res = handle_mcp_jsonrpc(
+            {"jsonrpc": "2.0", "id": 7, "method": "prompts/get", "params": {"name": "audit_panel_compliance", "arguments": {"project_id": "PRJ-BAT01"}}}
+        )
+        assert prompt_res is not None
+        self.assertIn("PRJ-BAT01", prompt_res["result"]["messages"][0]["content"]["text"])
+
+        # 5. Live Stdio Transport Round-Trip (`python3 -m backend.mcp_server`)
+        stdio_input = "\n".join(
+            [
+                json.dumps({"jsonrpc": "2.0", "id": 10, "method": "initialize", "params": {"protocolVersion": "2024-11-05"}}),
+                json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+                json.dumps({"jsonrpc": "2.0", "id": 11, "method": "tools/list"}),
+                json.dumps({"jsonrpc": "2.0", "id": 12, "method": "tools/call", "params": {"name": "list_tenants", "arguments": {}}}),
+            ]
+        ) + "\n"
+        proc = subprocess.run(
+            [sys.executable, "-m", "backend.mcp_server"],
+            input=stdio_input,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
+        )
+        lines = [json.loads(line) for line in proc.stdout.strip().splitlines() if line.strip()]
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(lines[0]["id"], 10)
+        self.assertEqual(lines[0]["result"]["protocolVersion"], "2024-11-05")
+        self.assertEqual(len(lines[1]["result"]["tools"]), 12)
+        self.assertGreaterEqual(len(lines[2]["result"]["structuredContent"]["tenants"]), 3)
 
 
 if __name__ == "__main__":

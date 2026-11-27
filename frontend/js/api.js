@@ -61,6 +61,11 @@ export const api = {
   resetLayoutPositions: (projectId) =>
     request(`/api/projects/${encodeURIComponent(projectId)}/layout/reset`, { method: "POST" }),
 
+  // Model Context Protocol (MCP) Streamable HTTP Client
+  getMcpInfo: () => request("/mcp"),
+  callMcpRpc: (rpcPayload) =>
+    request("/mcp", { method: "POST", body: JSON.stringify(rpcPayload) }),
+
   // Version, Auto-Update & GitHub Community
   getVersionInfo: () => request("/api/version"),
   getUpdateConfig: () => request("/api/update/config"),

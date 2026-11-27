@@ -2,6 +2,14 @@
 
 All notable changes to **PanelCraft AI** are documented in this file.
 
+## [0.8.0] - 2026-11-27
+### Added
+- **Model Context Protocol (MCP) Server — Stdio & Streamable HTTP (`2025-03-26` / `2024-11-05`)**:
+  - Added zero-dependency JSON-RPC 2.0 MCP server (`backend/mcp_server.py`) runnable over **Stdio** (`python3 -m backend.mcp_server`) for Claude Desktop, Cursor, Windsurf, VS Code, and Antigravity, AND mounted as **Streamable HTTP** at `POST /mcp` (with discovery at `GET /mcp` and optional Bearer JWT RBAC enforcement).
+  - Registered **12 Control Panel Engineering Tools** (`list_tenants`, `list_projects`, `get_panel_design_summary`, `create_project_from_rfp`, `add_load_unit`, `apply_circuit_macro`, `switch_panel_vendor_or_standard`, `run_engineering_verification`, `get_bom_and_io_schedule`, `generate_plc_interlock_st`, `move_mounting_plate_component`, `export_engineering_artifact`).
+  - Registered **7 MCP Resources & Templates** (`panelcraft://tenants`, `panelcraft://projects`, `panelcraft://macros`, `panelcraft://projects/{id}/design|eplan.aml|plcopen.xml|main.st`) and **3 Engineering Prompt Templates**.
+  - Added interactive **MCP Server & Live Tool Playground** modal (`MCP` button in topbar) with copyable Stdio/HTTP client configs and live JSON-RPC `tools/call` execution.
+
 ## [0.7.0] - 2026-11-27
 ### Added
 - **IEC 60909 Short-Circuit & Breaker Selectivity Engine**: Computes prospective 3-phase symmetrical fault current ($I''_{k3}$), peak short-circuit current ($i_p$), minimum fault current ($I_{k1,\min}$), main/branch $I_{cu}$ breaking verification (`ERC-005`), and upstream/downstream Selectivity Matrix (`TOTAL` / `PARTIAL` / `NON_SELECTIVE`, `ERC-006`).

@@ -12,9 +12,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -27,6 +27,7 @@ from backend.auth import (
     verify_password,
 )
 from backend.db import get_db_info
+from backend.mcp_server import get_mcp_server_metadata, handle_mcp_jsonrpc
 from backend.engine.calculator import compute_electrical_and_bom
 from backend.engine.copilot import generate_interlock_code, parse_nl_spec
 from backend.engine.io_plc import build_plc_and_io
@@ -274,7 +275,48 @@ def api_list_users(tenant_id: Optional[str] = None) -> list[UserPublic]:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     db_info = get_db_info()
-    return {"status": "ok", "service": "panelcraft-ai", "version": get_app_version(), "db_backend": db_info["backend"]}
+    return {
+        "status": "ok",
+        "service": "panelcraft-ai",
+        "version": get_app_version(),
+        "db_backend": db_info["backend"],
+        "mcp_endpoint": "/mcp",
+    }
+
+
+# --- Model Context Protocol (MCP) Streamable HTTP Endpoint ---
+
+@app.get("/mcp")
+def api_mcp_info(request: Request) -> dict:
+    base_url = str(request.base_url).rstrip("/")
+    return get_mcp_server_metadata(base_url=base_url)
+
+
+@app.post("/mcp")
+async def api_mcp_rpc(request: Request, user: Optional[dict] = Depends(get_optional_user)) -> Response:
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": f"Parse error: {exc}"}},
+        )
+
+    if isinstance(payload, list):
+        responses = [r for item in payload if (r := handle_mcp_jsonrpc(item, user=user)) is not None]
+        if not responses:
+            return Response(status_code=202)
+        return JSONResponse(content=responses, headers={"MCP-Protocol-Version": "2025-03-26"})
+
+    resp = handle_mcp_jsonrpc(payload, user=user)
+    if resp is None:
+        return Response(status_code=202)
+    return JSONResponse(content=resp, headers={"MCP-Protocol-Version": "2025-03-26"})
+
+
+@app.delete("/mcp")
+def api_mcp_close_session() -> Response:
+    return Response(status_code=204)
 
 
 @app.get("/api/version", response_model=AppVersionInfo)

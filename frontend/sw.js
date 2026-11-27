@@ -1,5 +1,5 @@
 /** PanelCraft AI Service Worker for offline shell caching & Android/Desktop PWA installability */
-const CACHE_NAME = "panelcraft-ai-v0.7.0";
+const CACHE_NAME = "panelcraft-ai-v0.8.0";
 const SHELL_ASSETS = [
   "/",
   "/styles/app.css",

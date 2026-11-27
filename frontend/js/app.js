@@ -666,6 +666,138 @@ btnLogout.addEventListener("click", async () => {
   showToast("Signed out.");
 });
 
+// --- Model Context Protocol (MCP) Server & Live Tool Playground ---
+
+const mcpModal = document.getElementById("mcpModal");
+const elMcpMeta = document.getElementById("mcpMetaBox");
+const elMcpConfigCode = document.getElementById("mcpConfigCode");
+const elMcpToolSelect = document.getElementById("mcpToolSelect");
+const elMcpToolDesc = document.getElementById("mcpToolDesc");
+const elMcpArgsInput = document.getElementById("mcpArgsInput");
+const elMcpOutput = document.getElementById("mcpOutputCode");
+let mcpInfoCache = null;
+
+function defaultArgsForMcpTool(toolName) {
+  const pid = state.activeProjectId || "PRJ-BAT01";
+  const presets = {
+    list_tenants: {},
+    list_projects: { tenant_id: state.activeTenantId || "TENANT-KBAT" },
+    get_panel_design_summary: { project_id: pid },
+    create_project_from_rfp: {
+      spec_text: "3P 380V, 2x 1.5kW VFD conveyors, 2x 750W servos, 12 pneumatic solenoids, PLe safety circuit",
+      project_name: "MCP Auto-Designed Cell Panel",
+      tenant_id: state.activeTenantId || "TENANT-KBAT",
+    },
+    add_load_unit: {
+      project_id: pid,
+      tag: "PUMP_MCP1",
+      name: "Coolant Circulation Pump",
+      load_type: "motor_dol",
+      power_kw: 2.2,
+      quantity: 1,
+    },
+    apply_circuit_macro: { project_id: pid, macro_id: "MACRO-HEATER-PID" },
+    switch_panel_vendor_or_standard: { project_id: pid, preferred_vendor: "Schneider Electric" },
+    run_engineering_verification: { project_id: pid },
+    get_bom_and_io_schedule: { project_id: pid },
+    generate_plc_interlock_st: {
+      project_id: pid,
+      requirement_text: "Stop all conveyors immediately on E-Stop or VFD overload fault and require manual reset.",
+    },
+    move_mounting_plate_component: { project_id: pid, reset: true },
+    export_engineering_artifact: { project_id: pid, format: "eplan_aml" },
+  };
+  return presets[toolName] ?? { project_id: pid };
+}
+
+function updateMcpToolSelection() {
+  if (!mcpInfoCache) return;
+  const tool = mcpInfoCache.tools.find((x) => x.name === elMcpToolSelect.value);
+  if (!tool) return;
+  elMcpToolDesc.textContent = tool.description;
+  elMcpArgsInput.value = JSON.stringify(defaultArgsForMcpTool(tool.name), null, 2);
+}
+
+document.getElementById("btnOpenMcp").addEventListener("click", async () => {
+  try {
+    mcpInfoCache = await api.getMcpInfo();
+    elMcpMeta.innerHTML = `
+      <div><strong>Server:</strong> <span class="mono">${mcpInfoCache.name}</span> v${mcpInfoCache.version} · Protocol <span class="tag-pill">${mcpInfoCache.protocol_version}</span></div>
+      <div style="margin-top:4px;font-size:12px;color:var(--ink-secondary)">
+        <strong>Streamable HTTP:</strong> <span class="mono">${mcpInfoCache.transports.streamable_http}</span> &nbsp;|&nbsp;
+        <strong>Stdio:</strong> <span class="mono">${mcpInfoCache.transports.stdio_command.join(" ")}</span>
+      </div>
+      <div style="margin-top:4px;font-size:12px;color:var(--ok-green)">
+        <strong>Registered:</strong> ${mcpInfoCache.tools_count} Engineering Tools · ${mcpInfoCache.resources_count} Resources · ${mcpInfoCache.prompts_count} Prompts
+      </div>
+    `;
+    elMcpConfigCode.textContent = JSON.stringify(mcpInfoCache.client_configs.claude_desktop_stdio, null, 2);
+    elMcpToolSelect.innerHTML = mcpInfoCache.tools
+      .map((tool) => `<option value="${tool.name}">${tool.name}</option>`)
+      .join("");
+    elMcpToolSelect.value = "get_panel_design_summary";
+    updateMcpToolSelection();
+    elMcpOutput.textContent = "// Click 'Execute tools/call' to send a live JSON-RPC 2.0 request to POST /mcp";
+    mcpModal.hidden = false;
+  } catch (err) {
+    showToast(err.message);
+  }
+});
+
+document.getElementById("btnCloseMcp").addEventListener("click", () => (mcpModal.hidden = true));
+elMcpToolSelect.addEventListener("change", updateMcpToolSelection);
+
+document.getElementById("btnMcpCfgStdio").addEventListener("click", () => {
+  if (!mcpInfoCache) return;
+  elMcpConfigCode.textContent = JSON.stringify(mcpInfoCache.client_configs.claude_desktop_stdio, null, 2);
+});
+document.getElementById("btnMcpCfgHttp").addEventListener("click", () => {
+  if (!mcpInfoCache) return;
+  elMcpConfigCode.textContent = JSON.stringify(mcpInfoCache.client_configs.streamable_http, null, 2);
+});
+document.getElementById("btnCopyMcpCfg").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(elMcpConfigCode.textContent);
+    showToast("Copied MCP client configuration JSON.");
+  } catch {
+    showToast("Select and copy the MCP JSON block.");
+  }
+});
+
+document.getElementById("btnRunMcpTool").addEventListener("click", async () => {
+  const toolName = elMcpToolSelect.value;
+  let parsedArgs = {};
+  try {
+    parsedArgs = JSON.parse(elMcpArgsInput.value || "{}");
+  } catch (e) {
+    showToast(`Invalid JSON arguments: ${e.message}`);
+    return;
+  }
+  elMcpOutput.textContent = "Executing MCP JSON-RPC 2.0 tools/call ...";
+  try {
+    const rpcRes = await api.callMcpRpc({
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "tools/call",
+      params: { name: toolName, arguments: parsedArgs },
+    });
+    elMcpOutput.textContent = JSON.stringify(rpcRes, null, 2);
+    const mutating = [
+      "create_project_from_rfp",
+      "add_load_unit",
+      "apply_circuit_macro",
+      "switch_panel_vendor_or_standard",
+      "move_mounting_plate_component",
+    ];
+    if (mutating.includes(toolName) && !rpcRes?.result?.isError) {
+      await refreshProjectList(state.activeProjectId);
+      showToast(`MCP tool '${toolName}' applied to workspace.`);
+    }
+  } catch (err) {
+    elMcpOutput.textContent = `ERROR: ${err.message}`;
+  }
+});
+
 // Register PWA Service Worker (Android / Desktop installable)
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
