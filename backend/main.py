@@ -32,7 +32,7 @@ from backend.engine.copilot import generate_interlock_code, parse_nl_spec
 from backend.engine.io_plc import build_plc_and_io
 from backend.engine.layout import build_panel_layout
 from backend.engine.llm_gateway import test_llm_connection
-from backend.engine.macros import STANDARD_MACROS, instantiate_macro_units
+from backend.engine.macros import STANDARD_MACROS, generate_eplan_ema_xml, instantiate_macro_units
 from backend.engine.rules import run_design_verification
 from backend.engine.schematic import build_terminals, synthesize_schematics
 from backend.exporters import (
@@ -68,6 +68,8 @@ from backend.models import (
     CopilotParseRequest,
     CopilotParseResponse,
     CustomCatalogItem,
+    CustomEplanMacro,
+    CustomEplanMacroRequest,
     ImportCatalogResponse,
     ImportLoadsResponse,
     InterlockRequest,
@@ -89,6 +91,7 @@ from backend.storage import (
     create_revision,
     create_user,
     delete_custom_catalog_item,
+    delete_custom_macro,
     delete_project,
     diff_revisions,
     get_llm_config,
@@ -100,6 +103,7 @@ from backend.storage import (
     init_db,
     list_audit_logs,
     list_custom_catalog,
+    list_custom_macros,
     list_projects,
     list_revisions,
     list_tenants,
@@ -111,6 +115,7 @@ from backend.storage import (
     save_update_config,
     update_revision_status,
     upsert_custom_catalog_items,
+    upsert_custom_macro,
 )
 from backend.updater import build_github_links, check_github_updates
 from backend.version import get_app_version, get_runtime_info, read_changelog_entries
@@ -151,13 +156,15 @@ def _to_user_public(row: dict) -> UserPublic:
 def compute_full_design(
     project: Project,
     custom_catalog: list[CustomCatalogItem] | None = None,
+    custom_macros: list[CustomEplanMacro] | None = None,
 ) -> ComputedDesign:
-    """Execute full SSOT pipeline: PLC/I/O -> Sizing/BOM -> 2D Layout & Wire Routing -> Rules -> Schematics."""
+    """Execute full SSOT pipeline: PLC/I/O -> Sizing/IEC60909/60890/BOM -> 2D Layout & Wire Routing -> Rules -> Schematics."""
     tenant = get_tenant(project.tenant_id)
     tenant_name = tenant.titleblock_company if tenant else "PanelCraft Organization"
     catalog = custom_catalog if custom_catalog is not None else list_custom_catalog(tenant_id=project.tenant_id)
+    macros = custom_macros if custom_macros is not None else list_custom_macros(tenant_id=project.tenant_id)
     plc_modules, plc_channels, st_code = build_plc_and_io(project)
-    power_summary, load_calcs, bom, bom_total = compute_electrical_and_bom(project, plc_modules, catalog)
+    power_summary, load_calcs, bom, bom_total = compute_electrical_and_bom(project, plc_modules, catalog, macros)
     terminals = build_terminals(load_calcs, plc_channels)
     panel_layout = build_panel_layout(project, power_summary, load_calcs, plc_modules)
 
@@ -338,11 +345,54 @@ def api_create_tenant(tenant: TenantOrg, user: Optional[dict] = Depends(get_opti
     return saved
 
 
-# --- Standard Circuit Macro Library & Audit Log ---
+# --- Standard & Company EPLAN .ema Circuit Macro Library & Audit Log ---
 
 @app.get("/api/macros", response_model=list[CircuitMacroTemplate])
 def api_list_macros() -> list[CircuitMacroTemplate]:
     return STANDARD_MACROS
+
+
+@app.get("/api/macros/custom", response_model=list[CustomEplanMacro])
+def api_list_custom_macros(tenant_id: Optional[str] = None) -> list[CustomEplanMacro]:
+    return list_custom_macros(tenant_id=tenant_id)
+
+
+@app.post("/api/macros/custom", response_model=CustomEplanMacro)
+def api_upsert_custom_macro(
+    body: CustomEplanMacroRequest,
+    user: Optional[dict] = Depends(get_optional_user),
+) -> CustomEplanMacro:
+    import uuid
+
+    actor = enforce_permission(user, "manage_catalog")
+    mid = (body.id or "").strip() or f"EMA-{uuid.uuid4().hex[:6].upper()}"
+    item = CustomEplanMacro(
+        id=mid,
+        tenant_id=body.tenant_id,
+        macro_code=body.macro_code.strip(),
+        eplan_file=body.eplan_file.strip(),
+        variant=(body.variant.strip().upper()[:1] or "A"),
+        representation_type=body.representation_type,
+        target_load_type=body.target_load_type,
+        name=body.name.strip(),
+        description=body.description.strip(),
+        placeholder_vars=body.placeholder_vars,
+    )
+    saved = upsert_custom_macro(item)
+    record_audit_log(saved.tenant_id, "MACRO_LIB", "EPLAN_MACRO_SAVED", f"Saved .ema macro {saved.macro_code} -> {saved.eplan_file} (Var {saved.variant})", actor=actor)
+    return saved
+
+
+@app.delete("/api/macros/custom/{macro_id}")
+def api_delete_custom_macro(
+    macro_id: str,
+    user: Optional[dict] = Depends(get_optional_user),
+) -> dict[str, bool]:
+    enforce_permission(user, "manage_catalog")
+    ok = delete_custom_macro(macro_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Custom EPLAN macro not found.")
+    return {"deleted": True}
 
 
 @app.post("/api/projects/{project_id}/macros/{macro_id}", response_model=ComputedDesign)
@@ -670,11 +720,18 @@ def api_diff_revisions(project_id: str, base_id: str, target_id: str) -> dict:
 # --- Downloadable Engineering Artifact Exporters ---
 
 @app.get("/api/projects/{project_id}/export/{fmt}")
-def api_export(project_id: str, fmt: str, sheet: Optional[int] = None, thermal: Optional[bool] = False) -> Response:
+def api_export(
+    project_id: str,
+    fmt: str,
+    sheet: Optional[int] = None,
+    thermal: Optional[bool] = False,
+    macro_file: Optional[str] = None,
+) -> Response:
     prj = get_project(project_id)
     if not prj:
         raise HTTPException(status_code=404, detail="Project not found.")
-    design = compute_full_design(prj)
+    custom_macros = list_custom_macros(tenant_id=prj.tenant_id)
+    design = compute_full_design(prj, custom_macros=custom_macros)
 
     if fmt == "bom_csv":
         return Response(content=export_bom_csv(design), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{project_id}_BOM.csv"'})
@@ -693,6 +750,11 @@ def api_export(project_id: str, fmt: str, sheet: Optional[int] = None, thermal: 
         return Response(content=svg, media_type="image/svg+xml", headers={"Content-Disposition": f'attachment; filename="{project_id}_MountingPlate_2D.svg"'})
     if fmt == "eplan_aml":
         return Response(content=export_eplan_aml(design), media_type="application/xml; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{project_id}_EPLAN.aml"'})
+    if fmt == "eplan_ema":
+        ema_fname, ema_xml = generate_eplan_ema_xml(
+            design.project, design.load_calculations, custom_macros=custom_macros, target_macro_file=macro_file
+        )
+        return Response(content=ema_xml, media_type="application/xml; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{ema_fname}"'})
     if fmt == "plcopen_xml":
         return Response(content=export_plcopen_xml(design), media_type="application/xml; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{project_id}_PLCopen.xml"'})
     if fmt == "eplan_parts_csv":
@@ -703,7 +765,7 @@ def api_export(project_id: str, fmt: str, sheet: Optional[int] = None, thermal: 
         return Response(content=export_engineering_dossier_html(design), media_type="text/html; charset=utf-8", headers={"Content-Disposition": f'inline; filename="{project_id}_Engineering_Report.html"'})
     if fmt == "package_zip":
         record_audit_log(prj.tenant_id, prj.id, "PACKAGE_EXPORTED", f"Downloaded full engineering package ZIP ({len(design.schematic_sheets)} sheets, {len(design.bom)} BOM items)")
-        return Response(content=export_full_package_zip(design), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{project_id}_Engineering_Package.zip"'})
+        return Response(content=export_full_package_zip(design, custom_macros=custom_macros), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{project_id}_Engineering_Package.zip"'})
     if fmt == "fat_md":
         return PlainTextResponse(content=export_fat_checklist_md(design), media_type="text/markdown; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{project_id}_FAT_Checklist.md"'})
     if fmt == "svg":

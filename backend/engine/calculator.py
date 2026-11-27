@@ -22,10 +22,13 @@ from backend.catalog import (
 from backend.models import (
     BomItem,
     CustomCatalogItem,
+    CustomEplanMacro,
     LoadCalculationResult,
     PlcModule,
     PowerSummary,
     Project,
+    SelectivityBranchItem,
+    ThermalAnalysis,
 )
 
 
@@ -63,14 +66,145 @@ def _match_custom(
     return candidates[0]
 
 
+def _compute_iec60909_short_circuit(
+    sys_v: int,
+    sys_p: int,
+    tx_kva: float,
+    tx_z_pct: float,
+    feeder_len_m: float,
+    feeder_sq: float,
+) -> tuple[float, float, float, float, float]:
+    """Compute IEC 60909-0 prospective short-circuit current at main panel busbar.
+
+    Returns (ik3_main_ka, ip_peak_ka, ik1_min_ka, r_main_ohm, x_main_ohm).
+    """
+    c_max = 1.05  # IEC 60909 Table 1 voltage factor for LV 380-480V
+    s_va = max(tx_kva, 50.0) * 1000.0
+    z_tr = (tx_z_pct / 100.0) * (sys_v ** 2) / s_va
+    r_tr = z_tr * 0.25
+    x_tr = math.sqrt(max(z_tr ** 2 - r_tr ** 2, 1e-9))
+
+    # Copper feeder impedance at 20C (worst-case maximum fault current)
+    rho_cu_20 = 0.0185  # Ohm * mm^2 / m
+    r_fdr = rho_cu_20 * max(feeder_len_m, 1.0) / max(feeder_sq, 2.5)
+    x_fdr = 0.00008 * max(feeder_len_m, 1.0)
+
+    r_tot = r_tr + r_fdr
+    x_tot = x_tr + x_fdr
+    z_tot = math.sqrt(r_tot ** 2 + x_tot ** 2)
+
+    if sys_p == 3:
+        ik3_a = (c_max * sys_v) / (math.sqrt(3.0) * max(z_tot, 1e-6))
+    else:
+        ik3_a = (c_max * sys_v) / (2.0 * max(z_tot, 1e-6))
+
+    rx_ratio = r_tot / max(x_tot, 1e-6)
+    kappa = 1.02 + 0.98 * math.exp(-3.0 * rx_ratio)
+    ik3_ka = round(ik3_a / 1000.0, 2)
+    ip_ka = round(kappa * math.sqrt(2.0) * ik3_ka, 2)
+    ik1_min_ka = round(ik3_ka * 0.62, 2)
+    return ik3_ka, ip_ka, ik1_min_ka, r_tot, x_tot
+
+
+def _compute_iec60890_thermal(
+    enc_w_mm: int,
+    enc_h_mm: int,
+    enc_d_mm: int,
+    install_type: str,
+    ambient_c: float,
+    max_internal_c: float,
+    total_heat_w: float,
+) -> tuple[ThermalAnalysis, str, tuple[str, str, str, str, int, int, int, str]]:
+    """Precision IEC 60890 effective enclosure surface & cooling unit selection.
+
+    Returns (ThermalAnalysis, cooling_solution_summary, bom_tuple).
+    """
+    w = enc_w_mm / 1000.0
+    h = enc_h_mm / 1000.0
+    d = enc_d_mm / 1000.0
+
+    # IEC 60890 Table 1 mounting surface area factors (m^2)
+    if install_type == "wall_mounted":
+        ae = 1.4 * w * (h + d) + 1.8 * d * h
+    elif install_type == "bayed_side_by_side":
+        ae = 1.4 * h * (w + d) + 1.4 * w * d
+    else:
+        ae = 1.8 * h * (w + d) + 1.4 * w * d
+
+    k_steel = 5.5  # W / (m^2 * K) painted sheet steel enclosure
+    delta_t = max(max_internal_c - ambient_c, 5.0)
+    natural_w = k_steel * ae * delta_t
+    net_cool_w = max(0.0, total_heat_w - natural_w)
+    uncooled_temp = ambient_c + (total_heat_w / max(k_steel * ae, 0.1))
+    req_airflow = round((3.1 * max(net_cool_w, total_heat_w * 0.35)) / delta_t, 1) if total_heat_w > natural_w else 0.0
+
+    if net_cool_w <= 0.0 and uncooled_temp <= max_internal_c - 2.0:
+        mode = "NATURAL"
+        part = "SK 3237.200"
+        cap_w = int(round(natural_w))
+        cooled_temp = round(uncooled_temp, 1)
+        sol = f"IEC 60890 자연 대류 방열 충분 (유효면적 {ae:.2f}m², 자연방열 {natural_w:.0f}W ≥ {total_heat_w:.0f}W)"
+        bom_item = ("방열 액세서리", "Rittal", part, "필터 루버 벤트 세트 (자연대류)", 2, 32000, 3, "-E_VENT")
+    elif ambient_c <= max_internal_c - 7.0 and net_cool_w <= 550.0:
+        mode = "FILTER_FAN"
+        if req_airflow <= 150.0:
+            part, fan_flow, price, cap_w = "SK 3240.100", 180, 185000, 480
+        else:
+            part, fan_flow, price, cap_w = "SK 3243.100", 550, 320000, 950
+        cooled_temp = round(min(max_internal_c - 2.5, ambient_c + (3.1 * net_cool_w) / max(fan_flow, 100.0) + 2.5), 1)
+        sol = f"IEC 60890 강제 필터 팬 ({part}, {fan_flow} m³/h | 필요풍량 {req_airflow} m³/h, 순냉각 {net_cool_w:.0f}W)"
+        bom_item = ("냉각 팬", "Rittal", part, f"TopTherm 필터팬 {fan_flow} m³/h + 배기필터", 1, price, 4, "-M_FAN1")
+    else:
+        mode = "PANEL_AC"
+        req_ac_w = max(500.0, net_cool_w * 1.25 if ambient_c < max_internal_c else total_heat_w * 1.25)
+        if req_ac_w <= 550:
+            part, cap_w, price = "SK 3185.830", 500, 1180000
+        elif req_ac_w <= 1050:
+            part, cap_w, price = "SK 3304.500", 1000, 1650000
+        elif req_ac_w <= 1650:
+            part, cap_w, price = "SK 3186.930", 1600, 2250000
+        else:
+            part, cap_w, price = "SK 3188.940", 2500, 2980000
+        cooled_temp = round(min(max_internal_c - 5.0, 35.0), 1)
+        sol = f"IEC 60890 밀폐형 판넬 에어컨 ({part}, 냉각능력 {cap_w}W | 미냉각 시 {uncooled_temp:.1f}°C)"
+        bom_item = ("판넬 쿨러", "Rittal", part, f"Blue e+ 제어반 냉각기 {cap_w}W (IP55 밀폐)", 1, price, 10, "-A_COOL1")
+
+    analysis = ThermalAnalysis(
+        enclosure_w_mm=enc_w_mm,
+        enclosure_h_mm=enc_h_mm,
+        enclosure_d_mm=enc_d_mm,
+        install_type=install_type,
+        effective_surface_m2=round(ae, 2),
+        natural_dissipation_w=round(natural_w, 1),
+        net_cooling_required_w=round(net_cool_w, 1),
+        predicted_uncooled_temp_c=round(uncooled_temp, 1),
+        predicted_cooled_temp_c=cooled_temp,
+        required_airflow_m3h=req_airflow,
+        cooling_mode=mode,
+        recommended_cooling_part=part,
+        recommended_cooling_capacity_w=cap_w,
+        thermal_margin_c=round(max_internal_c - cooled_temp, 1),
+    )
+    return analysis, sol, bom_item
+
+
 def compute_electrical_and_bom(
     project: Project,
     plc_modules: list[PlcModule],
     custom_catalog: list[CustomCatalogItem] | None = None,
+    custom_macros: list[CustomEplanMacro] | None = None,
 ) -> tuple[PowerSummary, list[LoadCalculationResult], list[BomItem], int]:
-    """Run deterministic electrical formulas, select components, and compile SSOT BOM."""
+    """Run deterministic electrical formulas, IEC 60909/60890 analysis, select components, and compile SSOT BOM."""
 
     custom_list = custom_catalog or []
+    macro_by_type: dict[str, CustomEplanMacro] = {m.target_load_type: m for m in (custom_macros or [])}
+
+    def resolve_macro(ltype: str) -> tuple[str, str]:
+        cm = macro_by_type.get(ltype)
+        if cm:
+            return cm.eplan_file, cm.variant
+        return EPLAN_MACRO_MAP.get(ltype, "EPLAN_M_GENERIC.ema"), "A"
+
     sys_v, sys_p = POWER_SYSTEM_SPECS.get(project.settings.power_system, (380, 3))
     vendor = project.settings.preferred_vendor
     ambient = project.settings.ambient_temp_c
@@ -302,6 +436,7 @@ def compute_electrical_and_bom(
             total_dc24v_a += dc24_a
             total_heat_w += heat_w
 
+            mac_file, mac_var = resolve_macro(load.load_type)
             results.append(
                 LoadCalculationResult(
                     unit_id=load.id,
@@ -309,7 +444,8 @@ def compute_electrical_and_bom(
                     name=load.name,
                     load_type=load.load_type,
                     iec_device_tag=dev_tag,
-                    eplan_macro=EPLAN_MACRO_MAP.get(load.load_type, "EPLAN_M_GENERIC.ema"),
+                    eplan_macro=mac_file,
+                    eplan_macro_variant=mac_var,
                     rated_current_a=round(unit_in, 2),
                     design_current_a=round(design_a, 2),
                     starting_current_a=round(start_a, 2),
@@ -345,6 +481,7 @@ def compute_electrical_and_bom(
             total_dc24v_a += grp_a
             total_heat_w += heat_w
 
+            mac_file, mac_var = resolve_macro(load.load_type)
             results.append(
                 LoadCalculationResult(
                     unit_id=load.id,
@@ -352,10 +489,13 @@ def compute_electrical_and_bom(
                     name=load.name,
                     load_type=load.load_type,
                     iec_device_tag=dev_tag,
+                    eplan_macro=mac_file,
+                    eplan_macro_variant=mac_var,
                     rated_current_a=round(grp_a, 2),
                     design_current_a=round(design_a, 2),
                     starting_current_a=round(grp_a * 1.1, 2),
                     wire_sq=wire_sq,
+                    wire_awg=sq_to_awg(wire_sq),
                     voltage_drop_pct=vd_pct,
                     breaker_rating_a=cp_a,
                     breaker_part=cp_part,
@@ -379,6 +519,7 @@ def compute_electrical_and_bom(
             total_dc24v_a += grp_a
             total_heat_w += qty * 0.25
 
+            mac_file, mac_var = resolve_macro(load.load_type)
             results.append(
                 LoadCalculationResult(
                     unit_id=load.id,
@@ -386,10 +527,13 @@ def compute_electrical_and_bom(
                     name=load.name,
                     load_type=load.load_type,
                     iec_device_tag=dev_tag,
+                    eplan_macro=mac_file,
+                    eplan_macro_variant=mac_var,
                     rated_current_a=round(grp_a, 2),
                     design_current_a=round(design_a, 2),
                     starting_current_a=round(grp_a, 2),
                     wire_sq=wire_sq,
+                    wire_awg=sq_to_awg(wire_sq),
                     voltage_drop_pct=vd_pct,
                     breaker_rating_a=4,
                     breaker_part=cp_part,
@@ -420,6 +564,7 @@ def compute_electrical_and_bom(
             total_dc24v_a += dc24_a
             total_heat_w += heat_w
 
+            mac_file, mac_var = resolve_macro(load.load_type)
             results.append(
                 LoadCalculationResult(
                     unit_id=load.id,
@@ -427,10 +572,13 @@ def compute_electrical_and_bom(
                     name=load.name,
                     load_type=load.load_type,
                     iec_device_tag=dev_tag,
+                    eplan_macro=mac_file,
+                    eplan_macro_variant=mac_var,
                     rated_current_a=round(dc24_a, 2),
                     design_current_a=round(dc24_a * 1.25, 2),
                     starting_current_a=round(dc24_a, 2),
                     wire_sq=0.75,
+                    wire_awg=sq_to_awg(0.75),
                     voltage_drop_pct=0.4,
                     breaker_rating_a=4,
                     breaker_part="CP-2P-4A (SAFETY)",
@@ -494,26 +642,89 @@ def compute_electrical_and_bom(
     tb_qty = max(20, len(project.loads) * 6)
     add_bom("단자대 (Terminal Block)", "Phoenix Contact", "UT 4 / PT 2.5 MIX", "동력/제어 배선 단자대 + 엔드브라켓", tb_qty, 1800, 2, "-X1, -X2")
 
-    cooling_m3h = round((3.1 * total_heat_w) / delta_t, 1)
-    if total_heat_w <= 120:
-        cooling_sol = "자연 대류 방열 (루버 벤트)"
-        add_bom("방열 액세서리", "Rittal", "SK 3237.200", "필터 루버 벤트 세트", 2, 32000, 3, "-E_VENT")
-    elif total_heat_w <= 650:
-        cooling_sol = f"강제 필터 팬 (필요풍량 {cooling_m3h} m³/h → 180 m³/h 팬 적용)"
-        add_bom("냉각 팬", "Rittal", "SK 3240.100", "TopTherm 필터팬 180 m³/h + 배기필터", 1, 185000, 4, "-M_FAN1")
-    else:
-        cooling_sol = f"판넬 쿨러 (제어반 에어컨 1000W급, 발열 {total_heat_w:.0f}W)"
-        add_bom("판넬 쿨러", "Rittal", "SK 3304.500", "Blue e+ 제어반 냉각기 1.0kW", 1, 1650000, 10, "-A_COOL1")
-
+    # Select enclosure first so IEC 60890 thermal analysis uses exact enclosure geometry
     complexity_score = sum(l.quantity for l in project.loads if l.load_type in ("motor_dol", "motor_inv", "servo", "heater")) * 2 + len(plc_modules)
     if complexity_score <= 8 and total_connected_kw <= 15:
+        enc_w, enc_h, enc_d = 800, 1200, 400
         enc_size, enc_part, enc_price = "800 × 1200 × 400 mm (벽부/자립형)", "Rittal AX 1280.000", 620000
     elif complexity_score <= 18 and total_connected_kw <= 45:
+        enc_w, enc_h, enc_d = 1000, 1800, 500
         enc_size, enc_part, enc_price = "1000 × 1800 × 500 mm (자립형 1면)", "Rittal VX 8085.000", 1280000
     else:
+        enc_w, enc_h, enc_d = 1600, 2000, 600
         enc_size, enc_part, enc_price = "1600 × 2000 × 600 mm (자립형 2면)", "Rittal VX 8606.000", 2350000
 
     add_bom("제어반 외함", "Rittal", enc_part, f"IP55 분체도장 외함 {enc_size}", 1, enc_price, 7, "=A1+P1")
+
+    # IEC 60890 Precision Thermal & Cooling Analysis
+    thermal_analysis, cooling_sol, cool_bom = _compute_iec60890_thermal(
+        enc_w_mm=enc_w,
+        enc_h_mm=enc_h,
+        enc_d_mm=enc_d,
+        install_type=project.settings.enclosure_install_type,
+        ambient_c=ambient,
+        max_internal_c=project.settings.max_internal_temp_c,
+        total_heat_w=total_heat_w,
+    )
+    add_bom(*cool_bom)
+    cooling_m3h = thermal_analysis.required_airflow_m3h if thermal_analysis.required_airflow_m3h > 0 else round((3.1 * total_heat_w) / delta_t, 1)
+
+    # IEC 60909 Short-Circuit Current & Breaker Selectivity Coordination
+    ik3_main, ip_peak, ik1_min, r_main, x_main = _compute_iec60909_short_circuit(
+        sys_v=sys_v,
+        sys_p=sys_p,
+        tx_kva=project.settings.supply_transformer_kva,
+        tx_z_pct=project.settings.supply_impedance_pct,
+        feeder_len_m=project.settings.feeder_length_m,
+        feeder_sq=max(main_wire_sq, 10.0),
+    )
+    main_margin_pct = round(((main_brk.icu_ka - ik3_main) / max(main_brk.icu_ka, 1)) * 100.0, 1)
+
+    load_by_id = {l.id: l for l in project.loads}
+    selectivity_checks: list[SelectivityBranchItem] = []
+    for res in results:
+        if res.load_type not in ("motor_dol", "motor_inv", "servo", "heater"):
+            continue
+        ld = load_by_id.get(res.unit_id)
+        cable_m = ld.cable_length_m if ld else 15.0
+        # Branch fault level at load terminals (or breaker outgoing terminals using internal 2m + branch impedance)
+        r_br = r_main + 0.0185 * 2.0 / max(res.wire_sq, 1.5)
+        x_br = x_main + 0.00008 * 2.0
+        z_br = math.sqrt(r_br ** 2 + x_br ** 2)
+        ik3_br = round(((1.05 * sys_v) / (math.sqrt(3.0) * max(z_br, 1e-6))) / 1000.0, 2) if sys_p == 3 else round(((1.05 * sys_v) / (2.0 * max(z_br, 1e-6))) / 1000.0, 2)
+
+        ratio = round(main_brk.rated_a / max(res.breaker_rating_a, 1), 2)
+        if ratio >= 2.5:
+            coord_status = "TOTAL"
+            note = f"Total selectivity ({ratio}x ≥ 2.5x; cable {cable_m:.0f}m)"
+        elif ratio >= 1.6:
+            coord_status = "PARTIAL"
+            note = f"Partial selectivity ({ratio}x; magnetic trip coordination recommended)"
+        else:
+            coord_status = "NON_SELECTIVE"
+            note = f"Low ratio ({ratio}x < 1.6x) — risk of simultaneous upstream trip"
+
+        selectivity_checks.append(
+            SelectivityBranchItem(
+                tag=res.tag,
+                name=res.name,
+                upstream_part=main_brk.part_number,
+                upstream_rating_a=main_brk.rated_a,
+                downstream_part=res.breaker_part,
+                downstream_rating_a=res.breaker_rating_a,
+                downstream_icu_ka=res.breaker_icu_ka,
+                ik3_branch_ka=ik3_br,
+                selectivity_ratio=ratio,
+                coordination_status=coord_status,
+                breaking_ok=res.breaker_icu_ka >= ik3_br,
+                note=note,
+            )
+        )
+
+    tot_cnt = sum(1 for s in selectivity_checks if s.coordination_status == "TOTAL")
+    part_cnt = sum(1 for s in selectivity_checks if s.coordination_status == "PARTIAL")
+    non_cnt = sum(1 for s in selectivity_checks if s.coordination_status == "NON_SELECTIVE")
+    sel_summary = f"TOTAL {tot_cnt} / PARTIAL {part_cnt} / NON-SEL {non_cnt}"
 
     category_order = [
         "주 차단기 (Main MCCB)",
@@ -575,6 +786,13 @@ def compute_electrical_and_bom(
         main_wire_sq=main_wire_sq,
         main_wire_awg=sq_to_awg(main_wire_sq),
         panel_sccr_ka=panel_sccr,
+        ik3_main_ka=ik3_main,
+        ip_peak_ka=ip_peak,
+        ik1_min_ka=ik1_min,
+        main_breaking_margin_pct=main_margin_pct,
+        selectivity_summary=sel_summary,
+        selectivity_checks=selectivity_checks,
+        thermal_analysis=thermal_analysis,
         transformer_part=tr_part,
         transformer_kva=tr_kva,
         total_dc24v_current_a=round(total_dc24v_a, 2),

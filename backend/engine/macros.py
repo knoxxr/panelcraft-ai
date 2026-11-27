@@ -112,3 +112,97 @@ def instantiate_macro_units(macro_id: str, project: Project) -> list[LoadUnit]:
             data.setdefault("phases", sys_p)
         created.append(LoadUnit(**data))
     return created
+
+
+def generate_eplan_ema_xml(
+    project: Project,
+    calcs: list,
+    custom_macros: list | None = None,
+    target_macro_file: str | None = None,
+) -> tuple[str, str]:
+    """Generate an EPLAN Electric P8 Window Macro XML (.ema) with Placeholder Object ValueSets.
+
+    Returns (filename, xml_content).
+    """
+    import xml.etree.ElementTree as ET
+    from xml.dom import minidom
+
+    custom_by_file = {m.eplan_file: m for m in (custom_macros or [])}
+    selected_calcs = [c for c in calcs if not target_macro_file or c.eplan_macro == target_macro_file]
+    if not selected_calcs:
+        selected_calcs = calcs[:1]
+
+    macro_name = target_macro_file or (selected_calcs[0].eplan_macro if selected_calcs else "EPLAN_M_PANEL.ema")
+    cm = custom_by_file.get(macro_name)
+    variant = cm.variant if cm else (selected_calcs[0].eplan_macro_variant if selected_calcs else "A")
+    rep_type = cm.representation_type if cm else "Multi-line"
+
+    root = ET.Element(
+        "EplanPxfRoot",
+        {
+            "Name": project.name,
+            "Type": "WindowMacro",
+            "Version": "2024.0",
+            "Generator": "PanelCraft AI SSOT",
+        },
+    )
+    meta = ET.SubElement(root, "MacroMetadata")
+    ET.SubElement(meta, "MacroFile").text = macro_name
+    ET.SubElement(meta, "Variant").text = variant
+    ET.SubElement(meta, "RepresentationType").text = rep_type
+    ET.SubElement(meta, "Standard").text = project.settings.standard_profile
+    ET.SubElement(meta, "PowerSystem").text = project.settings.power_system
+
+    # EPLAN Placeholder Object (O117) with resolved ValueSets for each matching circuit
+    placeholder_obj = ET.SubElement(
+        root,
+        "O117",
+        {
+            "MacroName": macro_name,
+            "Variant": variant,
+            "RepresentationType": rep_type,
+        },
+    )
+    vars_el = ET.SubElement(placeholder_obj, "PlaceholderVariables")
+    default_vars = (
+        cm.placeholder_vars
+        if (cm and cm.placeholder_vars)
+        else {
+            "<DeviceTag>": "{iec_device_tag}",
+            "<MCCB_Part>": "{breaker_part}",
+            "<MCCB_Rating_A>": "{breaker_rating_a}",
+            "<Drive_or_MC>": "{drive_or_mc}",
+            "<Wire_SQ>": "{wire_sq}",
+            "<Wire_AWG>": "{wire_awg}",
+        }
+    )
+    for k, v in default_vars.items():
+        ET.SubElement(vars_el, "Variable", {"Name": k, "Binding": v})
+
+    value_sets = ET.SubElement(placeholder_obj, "ValueSets")
+    for idx, c in enumerate(selected_calcs, start=1):
+        vs = ET.SubElement(value_sets, "ValueSet", {"Name": f"{c.tag}_SET{idx}", "UnitTag": c.tag})
+        ctx = {
+            "tag": c.tag,
+            "name": c.name,
+            "iec_device_tag": c.iec_device_tag,
+            "breaker_part": c.breaker_part,
+            "breaker_rating_a": str(c.breaker_rating_a),
+            "breaker_icu_ka": str(c.breaker_icu_ka),
+            "drive_or_mc": c.drive_part or c.contactor_part or "-",
+            "wire_sq": str(c.wire_sq),
+            "wire_awg": c.wire_awg,
+            "rated_current_a": str(c.rated_current_a),
+        }
+        for var_name, tmpl in default_vars.items():
+            resolved = tmpl
+            for ck, cv in ctx.items():
+                resolved = resolved.replace("{" + ck + "}", cv)
+            ET.SubElement(vs, "Value", {"Variable": var_name}).text = resolved
+
+    pretty = minidom.parseString(ET.tostring(root, encoding="utf-8")).toprettyxml(indent="  ", encoding="utf-8").decode("utf-8")
+    safe_fname = macro_name.replace("\\", "/").split("/")[-1]
+    if not safe_fname.lower().endswith(".ema"):
+        safe_fname += ".ema"
+    return safe_fname, pretty
+

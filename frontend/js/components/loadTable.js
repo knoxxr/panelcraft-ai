@@ -16,9 +16,10 @@ function esc(val) {
 export async function renderLoadsView(container, design, onUpdateProject, onReloadDesign, showToast) {
   const { project, load_calculations } = design;
   const calcMap = new Map(load_calculations.map((c) => [c.unit_id, c]));
-  const [customCatalog, macros] = await Promise.all([
+  const [customCatalog, macros, customMacros] = await Promise.all([
     api.listCustomCatalog(project.tenant_id),
     api.listMacros(),
+    api.listCustomMacros(project.tenant_id),
   ]);
   const isKo = getLang() === "ko";
   const isUL = project.settings.standard_profile === "UL 508A";
@@ -115,6 +116,42 @@ export async function renderLoadsView(container, design, onUpdateProject, onRelo
       </div>`
     : `<p style="margin:8px 0 0;font-size:12px;color:var(--ink-muted)">${t("catEmpty")}</p>`;
 
+  const customMacrosHtml = customMacros.length
+    ? `
+      <div class="table-wrap" style="margin-top:10px">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>${isKo ? "코드" : "Code"}</th>
+              <th>${isKo ? "적용 부하유형" : "Target Load Type"}</th>
+              <th>EPLAN .ema ${isKo ? "파일 경로" : "Path"}</th>
+              <th>${isKo ? "변형/유형" : "Variant / Type"}</th>
+              <th>${isKo ? "설명" : "Template Name"}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${customMacros
+              .map(
+                (cm) => `
+              <tr>
+                <td class="mono" style="font-weight:700">${esc(cm.macro_code)}</td>
+                <td><span class="tag-pill">${esc(t("lt_" + cm.target_load_type))}</span></td>
+                <td class="mono" style="font-size:11.5px;color:var(--accent-blue)">${esc(cm.eplan_file)}</td>
+                <td class="mono">Var ${esc(cm.variant)} · ${esc(cm.representation_type)}</td>
+                <td>${esc(cm.name)}</td>
+                <td style="white-space:nowrap">
+                  <a class="btn btn-secondary btn-sm" href="${api.exportEmaUrl(project.id, cm.eplan_file)}" style="margin-right:4px">.ema XML</a>
+                  <button class="btn btn-danger-ghost" data-del-macro="${esc(cm.id)}" type="button">${t("btnDelete")}</button>
+                </td>
+              </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>`
+    : `<p style="margin:8px 0 0;font-size:12px;color:var(--ink-muted)">${isKo ? "등록된 사내 커스텀 .ema 매크로가 없습니다. 아래에서 등록하면 해당 부하유형의 EPLAN AML / 회로도 / .ema XML에 자동 매핑됩니다." : "No company custom .ema overrides yet. Add one below to override default EPLAN macro mappings across AML, schematics, and .ema XML exports."}</p>`;
+
   container.innerHTML = `
     <div class="stack-gap">
       <div class="panel">
@@ -160,6 +197,25 @@ export async function renderLoadsView(container, design, onUpdateProject, onRelo
             <div class="field-group">
               <label class="field-label" for="inpSpare">${t("lblSpare")}</label>
               <input id="inpSpare" class="input mono" type="number" min="0" max="50" step="5" value="${Math.round(project.settings.io_spare_ratio * 100)}" />
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="inpTxKva">${isKo ? "수전 변압기 (kVA · IEC 60909)" : "Supply Tx (kVA · IEC 60909)"}</label>
+              <input id="inpTxKva" class="input mono" type="number" min="50" max="5000" step="50" value="${project.settings.supply_transformer_kva || 500}" />
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="inpTxZ">${isKo ? "변압기 %Z / 간선(m)" : "Tx %Z / Feeder (m)"}</label>
+              <div style="display:flex;gap:6px">
+                <input id="inpTxZ" class="input mono" type="number" min="2" max="12" step="0.5" value="${project.settings.supply_impedance_pct || 4.5}" style="width:50%" title="Transformer %Z" />
+                <input id="inpFeederM" class="input mono" type="number" min="1" max="500" step="5" value="${project.settings.feeder_length_m || 25}" style="width:50%" title="Main Feeder Length (m)" />
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="selInstallType">${isKo ? "외함 설치형태 (IEC 60890)" : "Enclosure Install (IEC 60890)"}</label>
+              <select id="selInstallType" class="input">
+                <option value="freestanding_all_open" ${(project.settings.enclosure_install_type || "freestanding_all_open") === "freestanding_all_open" ? "selected" : ""}>${isKo ? "자립형 (사방 개방)" : "Freestanding (All Sides Open)"}</option>
+                <option value="wall_mounted" ${project.settings.enclosure_install_type === "wall_mounted" ? "selected" : ""}>${isKo ? "벽부형 (후면 밀착)" : "Wall-Mounted (Rear Covered)"}</option>
+                <option value="bayed_side_by_side" ${project.settings.enclosure_install_type === "bayed_side_by_side" ? "selected" : ""}>${isKo ? "열반 연립형 (측면 밀착)" : "Bayed Side-by-Side"}</option>
+              </select>
             </div>
           </div>
         </div>
@@ -238,6 +294,46 @@ export async function renderLoadsView(container, design, onUpdateProject, onRelo
       <div class="panel">
         <div class="panel-header">
           <div>
+            <h2 class="panel-title">${isKo ? "사내 EPLAN Electric P8 .ema 매크로 템플릿 에디터" : "Company EPLAN Electric P8 .ema Macro Library Editor"}</h2>
+            <p class="panel-subtitle">${isKo ? "제조사/조직별 사내 표준 .ema 파일 경로, Variant(A~P), Placeholder 변수 매핑을 관리하고 EPLAN용 .ema XML을 즉시 생성합니다." : "Map company-standard .ema macro paths, Variants (A–P), and Placeholder variables for EPLAN AML & .ema XML generation."}</p>
+          </div>
+          <a class="btn btn-secondary btn-sm" href="${api.exportEmaUrl(project.id)}">${isKo ? "현재 프로젝트 .ema 다운로드" : "Download .ema XML"}</a>
+        </div>
+        <div class="panel-body">
+          <div style="display:grid;grid-template-columns:120px 150px 1fr 80px 160px auto;gap:8px;align-items:end">
+            <div class="field-group">
+              <label class="field-label" for="emaCode">${isKo ? "매크로 코드" : "Macro Code"}</label>
+              <input id="emaCode" class="input mono" placeholder="STD-VFD-01" />
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="emaLoadType">${isKo ? "대상 부하유형" : "Load Type"}</label>
+              <select id="emaLoadType" class="input">
+                ${LOAD_TYPE_KEYS.map((k) => `<option value="${k}">${t("lt_" + k)}</option>`).join("")}
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="emaFile">EPLAN .ema ${isKo ? "파일명/경로" : "File Path"}</label>
+              <input id="emaFile" class="input mono" placeholder="$(MD_MACROS)\\Company\\VFD_3P_v2.ema" />
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="emaVar">Variant</label>
+              <select id="emaVar" class="input mono">
+                ${["A", "B", "C", "D", "E", "F"].map((v) => `<option value="${v}">${v}</option>`).join("")}
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="emaName">${isKo ? "템플릿명" : "Template Name"}</label>
+              <input id="emaName" class="input" placeholder="Company VFD Standard" />
+            </div>
+            <button id="btnSaveCustomMacro" class="btn btn-primary btn-sm" type="button">${isKo ? "매크로 저장" : "Save .ema"}</button>
+          </div>
+          ${customMacrosHtml}
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div>
             <h2 class="panel-title">${t("v1LoadListTitle")}</h2>
             <p class="panel-subtitle">${t("v1LoadListSub")}</p>
           </div>
@@ -281,11 +377,61 @@ export async function renderLoadsView(container, design, onUpdateProject, onRelo
     next.settings.power_system = container.querySelector("#selPowerSys").value;
     next.settings.ambient_temp_c = Number(container.querySelector("#inpAmbient").value) || 35;
     next.settings.io_spare_ratio = Math.max(0, Math.min(0.5, (Number(container.querySelector("#inpSpare").value) || 20) / 100));
+    next.settings.supply_transformer_kva = Math.max(50, Number(container.querySelector("#inpTxKva").value) || 500);
+    next.settings.supply_impedance_pct = Math.max(2, Math.min(12, Number(container.querySelector("#inpTxZ").value) || 4.5));
+    next.settings.feeder_length_m = Math.max(1, Number(container.querySelector("#inpFeederM").value) || 25);
+    next.settings.enclosure_install_type = container.querySelector("#selInstallType").value;
     onUpdateProject(next);
   };
 
-  ["#inpProjName", "#inpClient", "#selStandard", "#selPowerSys", "#inpAmbient", "#inpSpare"].forEach((sel) => {
+  ["#inpProjName", "#inpClient", "#selStandard", "#selPowerSys", "#inpAmbient", "#inpSpare", "#inpTxKva", "#inpTxZ", "#inpFeederM", "#selInstallType"].forEach((sel) => {
     container.querySelector(sel).addEventListener("change", commitSettings);
+  });
+
+  container.querySelector("#btnSaveCustomMacro").addEventListener("click", async () => {
+    const macro_code = container.querySelector("#emaCode").value.trim();
+    const eplan_file = container.querySelector("#emaFile").value.trim();
+    const target_load_type = container.querySelector("#emaLoadType").value;
+    const variant = container.querySelector("#emaVar").value;
+    const name = container.querySelector("#emaName").value.trim() || `${macro_code} (${target_load_type})`;
+    if (!macro_code || !eplan_file) {
+      showToast(isKo ? "매크로 코드와 .ema 파일 경로를 입력하세요." : "Enter both Macro Code and EPLAN .ema file path.");
+      return;
+    }
+    try {
+      await api.saveCustomMacro({
+        tenant_id: project.tenant_id,
+        macro_code,
+        eplan_file,
+        variant,
+        representation_type: "Multi-line",
+        target_load_type,
+        name,
+        description: `Company template mapped to ${target_load_type}`,
+        placeholder_vars: {
+          "<DeviceTag>": "{iec_device_tag}",
+          "<MCCB_Part>": "{breaker_part}",
+          "<Drive_or_MC>": "{drive_or_mc}",
+          "<Wire_SQ>": "{wire_sq}",
+        },
+      });
+      showToast(isKo ? `사내 EPLAN 매크로 ${macro_code} 저장 완료` : `Saved company EPLAN macro ${macro_code} (Var ${variant})`);
+      await onReloadDesign();
+    } catch (err) {
+      showToast(err.message);
+    }
+  });
+
+  container.querySelectorAll("[data-del-macro]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        await api.deleteCustomMacro(btn.dataset.delMacro);
+        showToast(isKo ? "사내 매크로 매핑을 삭제했습니다." : "Deleted custom EPLAN macro mapping.");
+        await onReloadDesign();
+      } catch (err) {
+        showToast(err.message);
+      }
+    });
   });
 
   container.querySelector("#btnUploadLoads").addEventListener("click", async () => {

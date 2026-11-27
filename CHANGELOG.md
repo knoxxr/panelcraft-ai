@@ -2,6 +2,12 @@
 
 All notable changes to **PanelCraft AI** are documented in this file.
 
+## [0.7.0] - 2026-11-27
+### Added
+- **IEC 60909 Short-Circuit & Breaker Selectivity Engine**: Computes prospective 3-phase symmetrical fault current ($I''_{k3}$), peak short-circuit current ($i_p$), minimum fault current ($I_{k1,\min}$), main/branch $I_{cu}$ breaking verification (`ERC-005`), and upstream/downstream Selectivity Matrix (`TOTAL` / `PARTIAL` / `NON_SELECTIVE`, `ERC-006`).
+- **IEC 60890 Precision Thermal & Cooling Engineering**: Computes effective enclosure cooling surface ($A_e$) by installation type (freestanding, wall-mounted, bayed), natural dissipation ($P_{\text{nat}}$), predicted uncooled vs cooled internal temperature, and automatically selects Natural Vent, TopTherm Filter Fan, or Blue e+ Panel AC in BOM.
+- **Company EPLAN Electric P8 `.ema` Macro Library Editor & XML Exporter**: Tenant-scoped CRUD for company `.ema` paths, Variants (`A–P`), and Placeholder Variable bindings; overrides EPLAN AML (`EPLANMacroVariant`), schematics, downloadable `.ema` Window Macro XML (`<EplanPxfRoot>` + `<O117>` + `<ValueSet>`), and `EPLAN/macros/*.ema` inside the Full Engineering ZIP.
+
 ## [0.6.0] - 2026-11-27
 ### Added
 - **Multi-Tenant SaaS Authentication & 4-Role RBAC**: PBKDF2-HMAC-SHA256 password hashing + HS256 JWT tokens with `admin`, `reviewer`, `designer`, and `viewer` roles enforced across projects, catalogs, revision release approvals, and rollbacks.

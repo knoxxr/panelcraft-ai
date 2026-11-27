@@ -14,6 +14,7 @@ from backend.auth import hash_password
 from backend.db import DEFAULT_SQLITE_PATH, DatabaseSession
 from backend.models import (
     CustomCatalogItem,
+    CustomEplanMacro,
     LlmConfig,
     LoadUnit,
     Project,
@@ -90,6 +91,23 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 unit_price_krw INTEGER NOT NULL,
                 lead_time_days INTEGER NOT NULL,
                 lifecycle_status TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS custom_macros (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL DEFAULT 'TENANT-KBAT',
+                macro_code TEXT NOT NULL,
+                eplan_file TEXT NOT NULL,
+                variant TEXT NOT NULL DEFAULT 'A',
+                representation_type TEXT NOT NULL DEFAULT 'Multi-line',
+                target_load_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                placeholder_vars_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
             """
         )
@@ -789,5 +807,94 @@ def list_users(tenant_id: Optional[str] = None, db_path: Path = DB_PATH) -> list
     finally:
         conn.close()
     return [dict(r) for r in rows]
+
+
+# --- Company EPLAN .ema Macro Library ---
+
+def list_custom_macros(tenant_id: Optional[str] = None, db_path: Path = DB_PATH) -> list[CustomEplanMacro]:
+    conn = _connect(db_path)
+    try:
+        if tenant_id:
+            rows = conn.execute(
+                "SELECT * FROM custom_macros WHERE tenant_id = ? ORDER BY updated_at DESC",
+                (tenant_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM custom_macros ORDER BY updated_at DESC").fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    finally:
+        conn.close()
+    result: list[CustomEplanMacro] = []
+    for r in rows:
+        try:
+            pvars = json.loads(r["placeholder_vars_json"] or "{}")
+        except Exception:
+            pvars = {}
+        result.append(
+            CustomEplanMacro(
+                id=r["id"],
+                tenant_id=r["tenant_id"],
+                macro_code=r["macro_code"],
+                eplan_file=r["eplan_file"],
+                variant=r["variant"],
+                representation_type=r["representation_type"],
+                target_load_type=r["target_load_type"],
+                name=r["name"],
+                description=r["description"],
+                placeholder_vars=pvars,
+                updated_at=r["updated_at"],
+            )
+        )
+    return result
+
+
+def upsert_custom_macro(item: CustomEplanMacro, db_path: Path = DB_PATH) -> CustomEplanMacro:
+    item.updated_at = datetime.now().isoformat(timespec="seconds")
+    conn = _connect(db_path)
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO custom_macros (
+                id, tenant_id, macro_code, eplan_file, variant, representation_type,
+                target_load_type, name, description, placeholder_vars_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                macro_code = excluded.macro_code,
+                eplan_file = excluded.eplan_file,
+                variant = excluded.variant,
+                representation_type = excluded.representation_type,
+                target_load_type = excluded.target_load_type,
+                name = excluded.name,
+                description = excluded.description,
+                placeholder_vars_json = excluded.placeholder_vars_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                item.id,
+                item.tenant_id,
+                item.macro_code,
+                item.eplan_file,
+                item.variant,
+                item.representation_type,
+                item.target_load_type,
+                item.name,
+                item.description,
+                json.dumps(item.placeholder_vars, ensure_ascii=False),
+                item.updated_at,
+            ),
+        )
+    conn.close()
+    return item
+
+
+def delete_custom_macro(macro_id: str, db_path: Path = DB_PATH) -> bool:
+    conn = _connect(db_path)
+    with conn:
+        cur = conn.execute("DELETE FROM custom_macros WHERE id = ?", (macro_id,))
+    conn.close()
+    return cur.rowcount > 0
+
 
 

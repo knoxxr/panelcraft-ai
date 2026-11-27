@@ -83,6 +83,10 @@ class ProjectSettings(BaseModel):
     io_spare_ratio: float = Field(default=0.20, ge=0.0, le=0.50)
     ambient_temp_c: float = Field(default=35.0, ge=10.0, le=55.0)
     max_internal_temp_c: float = Field(default=45.0, ge=25.0, le=60.0)
+    supply_transformer_kva: float = Field(default=500.0, ge=50.0, le=5000.0)
+    supply_impedance_pct: float = Field(default=4.5, ge=2.0, le=12.0)
+    feeder_length_m: float = Field(default=25.0, ge=1.0, le=500.0)
+    enclosure_install_type: Literal["freestanding_all_open", "wall_mounted", "bayed_side_by_side"] = "freestanding_all_open"
 
 
 class Project(BaseModel):
@@ -122,6 +126,7 @@ class LoadCalculationResult(BaseModel):
     load_type: LoadType
     iec_device_tag: str
     eplan_macro: str = "EPLAN_M_GENERIC.ema"
+    eplan_macro_variant: str = "A"
     rated_current_a: float
     design_current_a: float
     starting_current_a: float
@@ -138,6 +143,42 @@ class LoadCalculationResult(BaseModel):
     formula_trace: str = ""
 
 
+class SelectivityBranchItem(BaseModel):
+    """IEC 60909 branch fault level & IEC 60364-5-53 upstream/downstream breaker selectivity."""
+
+    tag: str
+    name: str
+    upstream_part: str
+    upstream_rating_a: int
+    downstream_part: str
+    downstream_rating_a: int
+    downstream_icu_ka: int
+    ik3_branch_ka: float
+    selectivity_ratio: float
+    coordination_status: Literal["TOTAL", "PARTIAL", "NON_SELECTIVE"]
+    breaking_ok: bool
+    note: str = ""
+
+
+class ThermalAnalysis(BaseModel):
+    """IEC 60890 enclosure surface dissipation & precision cooling equipment sizing."""
+
+    enclosure_w_mm: int
+    enclosure_h_mm: int
+    enclosure_d_mm: int
+    install_type: str
+    effective_surface_m2: float
+    natural_dissipation_w: float
+    net_cooling_required_w: float
+    predicted_uncooled_temp_c: float
+    predicted_cooled_temp_c: float
+    required_airflow_m3h: float
+    cooling_mode: Literal["NATURAL", "FILTER_FAN", "PANEL_AC"]
+    recommended_cooling_part: str
+    recommended_cooling_capacity_w: int
+    thermal_margin_c: float
+
+
 class PowerSummary(BaseModel):
     system_voltage_v: int
     phases: int
@@ -151,6 +192,13 @@ class PowerSummary(BaseModel):
     main_wire_sq: float
     main_wire_awg: str = "10 AWG"
     panel_sccr_ka: int = 18
+    ik3_main_ka: float = 0.0
+    ip_peak_ka: float = 0.0
+    ik1_min_ka: float = 0.0
+    main_breaking_margin_pct: float = 0.0
+    selectivity_summary: str = ""
+    selectivity_checks: list[SelectivityBranchItem] = Field(default_factory=list)
+    thermal_analysis: Optional[ThermalAnalysis] = None
     transformer_part: Optional[str] = None
     transformer_kva: float = 0.0
     total_dc24v_current_a: float
@@ -452,5 +500,35 @@ class AuthTokenResponse(BaseModel):
 
 class LayoutPositionsUpdateRequest(BaseModel):
     positions: dict[str, dict[str, float]]
+
+
+class CustomEplanMacro(BaseModel):
+    """Company-specific EPLAN Electric P8 .ema window macro template & placeholder mapping."""
+
+    id: str
+    tenant_id: str = "TENANT-KBAT"
+    macro_code: str = Field(..., description="Internal macro ID e.g. KBAT-VFD-01")
+    eplan_file: str = Field(..., description="EPLAN .ema path e.g. $(MD_MACROS)\\KBAT\\VFD_3P.ema")
+    variant: str = Field(default="A", description="EPLAN Macro Variant A..P")
+    representation_type: Literal["Multi-line", "Single-line", "Panel layout", "Overview"] = "Multi-line"
+    target_load_type: LoadType
+    name: str
+    description: str = ""
+    placeholder_vars: dict[str, str] = Field(default_factory=dict)
+    updated_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+
+
+class CustomEplanMacroRequest(BaseModel):
+    id: Optional[str] = None
+    tenant_id: str = "TENANT-KBAT"
+    macro_code: str
+    eplan_file: str
+    variant: str = "A"
+    representation_type: Literal["Multi-line", "Single-line", "Panel layout", "Overview"] = "Multi-line"
+    target_load_type: LoadType
+    name: str
+    description: str = ""
+    placeholder_vars: dict[str, str] = Field(default_factory=dict)
+
 
 

@@ -5,20 +5,19 @@
 <h1 align="center">PanelCraft AI</h1>
 
 <p align="center">
-  <strong>B2B Cloud SaaS Control Panel SSOT Design Automation Platform (v0.6.0)</strong><br />
-  Multi-Tenant RBAC · PostgreSQL/SQLite · EPLAN AML + Macros · 6 PLC &amp; 7 Electrical Vendors · Interactive 2D Drag-and-Drop · Windows / macOS / Linux / Android
+  <strong>B2B Cloud SaaS Control Panel SSOT Design Automation Platform (v0.7.0)</strong><br />
+  IEC 60909 Short-Circuit &amp; Selectivity · IEC 60890 Thermal/Cooling · EPLAN .ema Macro Editor · Multi-Tenant RBAC · Interactive 2D Drag-and-Drop
 </p>
 
 ---
 
 ## Key Capabilities
 
+- **IEC 60909 Short-Circuit, Breaker Selectivity & IEC 60890 Precision Thermal (`v0.7.0`)**: Prospective 3-phase fault current ($I''_{k3}$), peak $i_p$, main/branch $I_{cu}$ breaking check (`ERC-005`), upstream/downstream selectivity matrix (`TOTAL`/`PARTIAL`/`NON-SEL`, `ERC-006`), and IEC 60890 effective enclosure dissipation ($A_e$, $P_{\text{nat}}$, uncooled vs cooled temperature, automatic Rittal TopTherm Fan / Blue e+ Panel AC BOM sizing).
+- **Company EPLAN Electric P8 `.ema` Macro Library Editor & XML Exporter (`v0.7.0`)**: Manage tenant-scoped `.ema` macro paths, Variants (`A–P`), and Placeholder Object variables; auto-applied across EPLAN AML, schematics, standalone `.ema` XML export (`<EplanPxfRoot>` / `<O117>` / `<ValueSet>`), and Full Engineering ZIP (`EPLAN/macros/*.ema`).
 - **Multi-Tenant B2B Cloud SaaS, JWT Auth & 4-Role RBAC (`v0.6.0`)**: Organization workspaces (`Org`), PBKDF2-SHA256 + HS256 JWT authentication, 4-role RBAC (`admin`, `reviewer`, `designer`, `viewer`) enforced on mutations and `Released` revision approvals, audit trail, and unified **SQLite / PostgreSQL (`DATABASE_URL`)** database adapter with Docker Compose.
 - **Interactive 2D Mounting Plate Drag-and-Drop, Collision & Wire BOM (`v0.6.0`)**: 10mm grid-snapped SVG Drag-and-Drop placement with persisted coordinates, real-time collision (`LAY-001`), plate boundary (`LAY-002`), and drive thermal clearance (`LAY-003`) alerts synced to Rule Checks, Thermal Heatmap overlay, 1:1 mm DXF, and **Manhattan duct-routed Panel Internal Wire length estimation** automatically injected into the Unified BOM (`M`).
-- **Deterministic Electrical Sizing & Multi-Vendor BOM**: 3-phase/1-phase rated & starting current, voltage drop, cable SQ↔AWG, step-down transformer auto-sizing, SCCR & UL 508A / IEC 60204-1 / KS C IEC 60364 compliance, 7 electrical vendors (LS Electric, Schneider Electric, Siemens, Mitsubishi Electric, ABB, Fuji Electric, Omron), and **Excel (`.xlsx`) / CSV Load & Company Catalog DB Import**.
-- **6-Vendor PLC Rack, I/O Allocation & PLCopen TC6 XML**: Mitsubishi Electric, LS Electric, Siemens, Rockwell Automation, Omron, and Beckhoff native addressing, spare-ratio rack sizing, **PLCopen TC6 XML**, IEC 61131-3 ST scaffolding, and **Natural-Language ST Interlock & Alarm Generator**.
-- **Auto-Paginated Multi-Sheet IEC 61082 Schematics & EPLAN Delivery Package**: Automatic page splitting (`SH-02A/B`, `SH-04A/B`), `.ema` macro mapping, multi-sheet AutoCAD `.dxf`, **EPLAN AutomationML (`.aml`) + EPLAN Parts CSV**, Wire Labels CSV, Dossier HTML, and 1-click **Full Engineering Delivery Package (`.zip`)**.
-- **Bilingual UI (EN Default / KO), External & Local LLM Gateway, Version Rollback & GitHub Auto-Update**: Offline Engine / Ollama / OpenAI-compatible RFP PDF parsing, revision promotion (`Draft → In Review → Released`), ECN Diff, rollback, and GitHub Releases Auto-Updater + Issues/Discussions.
+- **Deterministic Electrical Sizing, 7 Electrical Vendors, 6 PLC Vendors & Multi-Sheet Schematics**: UL 508A / IEC 60204-1 / KS C IEC 60364, step-down transformer sizing, PLCopen TC6 XML, auto-paginated schematics & multi-sheet DXF, Excel/CSV & PDF RFP LLM Gateway, and GitHub Auto-Update + Issues/Discussions.
 
 ---
 

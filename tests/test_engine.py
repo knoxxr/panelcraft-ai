@@ -270,12 +270,12 @@ class TestPanelCraftEngine(unittest.TestCase):
         from backend.updater import build_github_links
         from backend.version import get_app_version, is_newer_version, read_changelog_entries
 
-        self.assertEqual(get_app_version(), "0.6.0")
-        self.assertTrue(is_newer_version("0.7.0", "0.6.0"))
-        self.assertFalse(is_newer_version("0.6.0", "0.6.0"))
-        self.assertGreaterEqual(len(read_changelog_entries()), 6)
+        self.assertEqual(get_app_version(), "0.7.0")
+        self.assertTrue(is_newer_version("0.8.0", "0.7.0"))
+        self.assertFalse(is_newer_version("0.7.0", "0.7.0"))
+        self.assertGreaterEqual(len(read_changelog_entries()), 7)
 
-        links = build_github_links("myorg/panelcraft-ai", "0.6.0")
+        links = build_github_links("myorg/panelcraft-ai", "0.7.0")
         self.assertIn("issues/new", links["new_bug_url"])
         self.assertIn("discussions", links["discussions_url"])
 
@@ -447,6 +447,91 @@ class TestPanelCraftEngine(unittest.TestCase):
         col_design = compute_full_design(prj, custom_catalog=[])
         self.assertTrue(any(i.code == "LAY-001" for i in col_design.panel_layout.layout_issues))
         self.assertTrue(any(r.rule_id == "LAY-001" and r.severity == "ERROR" for r in col_design.rule_checks))
+
+    def test_v07_iec60909_selectivity_iec60890_thermal_and_eplan_ema_library(self) -> None:
+        import io
+        import zipfile
+        from backend.engine.macros import generate_eplan_ema_xml
+        from backend.exporters import export_full_package_zip
+        from backend.models import CustomEplanMacro
+        from backend.storage import delete_custom_macro, list_custom_macros, upsert_custom_macro
+
+        # 1. IEC 60909 Short-Circuit & Breaker Selectivity + IEC 60890 Thermal
+        prj = self._sample_project()
+        design = compute_full_design(prj, custom_catalog=[], custom_macros=[])
+        ps = design.power_summary
+        self.assertGreater(ps.ik3_main_ka, 1.0)
+        self.assertGreater(ps.ip_peak_ka, ps.ik3_main_ka)
+        self.assertGreater(len(ps.selectivity_checks), 0)
+        self.assertIsNotNone(ps.thermal_analysis)
+        assert ps.thermal_analysis is not None
+        self.assertGreater(ps.thermal_analysis.effective_surface_m2, 2.0)
+        self.assertIn(ps.thermal_analysis.cooling_mode, ("NATURAL", "FILTER_FAN", "PANEL_AC"))
+
+        # High ambient (42C) + bayed enclosure should escalate cooling to PANEL_AC (Blue e+)
+        hot_prj = self._sample_project()
+        hot_prj.settings.ambient_temp_c = 42.0
+        hot_prj.settings.max_internal_temp_c = 45.0
+        hot_prj.settings.enclosure_install_type = "bayed_side_by_side"
+        hot_design = compute_full_design(hot_prj, custom_catalog=[], custom_macros=[])
+        assert hot_design.power_summary.thermal_analysis is not None
+        self.assertEqual(hot_design.power_summary.thermal_analysis.cooling_mode, "PANEL_AC")
+        self.assertTrue(any("Blue e+" in b.spec for b in hot_design.bom))
+
+        # Extreme upstream short-circuit (3000kVA, 2.5%Z, 2m feeder) must trigger ERC-005 ERROR
+        fault_prj = self._sample_project()
+        fault_prj.settings.supply_transformer_kva = 3000.0
+        fault_prj.settings.supply_impedance_pct = 2.5
+        fault_prj.settings.feeder_length_m = 2.0
+        fault_design = compute_full_design(fault_prj, custom_catalog=[], custom_macros=[])
+        self.assertGreater(fault_design.power_summary.ik3_main_ka, 30.0)
+        self.assertTrue(any(r.rule_id == "ERC-005" and r.severity == "ERROR" for r in fault_design.rule_checks))
+
+        # 2. Company EPLAN .ema Macro Library CRUD + AML/XML/ZIP Override
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "macros.db"
+            init_db(db)
+            custom_m = CustomEplanMacro(
+                id="EMA-TEST01",
+                tenant_id="TENANT-KBAT",
+                macro_code="KBAT-VFD-STD",
+                eplan_file="$(MD_MACROS)\\KBAT\\KBAT_VFD_3P_REV4.ema",
+                variant="C",
+                representation_type="Multi-line",
+                target_load_type="motor_inv",
+                name="KBAT Standard 3P VFD Macro",
+                placeholder_vars={"<KBAT_TAG>": "{iec_device_tag}", "<KBAT_MCCB>": "{breaker_part}"},
+            )
+            upsert_custom_macro(custom_m, db_path=db)
+            loaded = list_custom_macros(tenant_id="TENANT-KBAT", db_path=db)
+            self.assertEqual(len(loaded), 1)
+            self.assertEqual(loaded[0].variant, "C")
+
+            d_custom = compute_full_design(prj, custom_catalog=[], custom_macros=loaded)
+            vfd_calc = next(c for c in d_custom.load_calculations if c.load_type == "motor_inv")
+            self.assertEqual(vfd_calc.eplan_macro, "$(MD_MACROS)\\KBAT\\KBAT_VFD_3P_REV4.ema")
+            self.assertEqual(vfd_calc.eplan_macro_variant, "C")
+
+            aml = export_eplan_aml(d_custom)
+            self.assertIn("KBAT_VFD_3P_REV4.ema", aml)
+            self.assertIn("EPLANMacroVariant", aml)
+            self.assertIn("IEC60909_Ik3Main", aml)
+
+            ema_name, ema_xml = generate_eplan_ema_xml(
+                d_custom.project, d_custom.load_calculations, custom_macros=loaded, target_macro_file=vfd_calc.eplan_macro
+            )
+            self.assertEqual(ema_name, "KBAT_VFD_3P_REV4.ema")
+            self.assertIn("<EplanPxfRoot", ema_xml)
+            self.assertIn("<O117", ema_xml)
+            self.assertIn("&lt;KBAT_TAG&gt;", ema_xml)
+
+            zbytes = export_full_package_zip(d_custom, custom_macros=loaded)
+            with zipfile.ZipFile(io.BytesIO(zbytes), "r") as zf:
+                names = zf.namelist()
+                self.assertIn("EPLAN/macros/KBAT_VFD_3P_REV4.ema", names)
+
+            self.assertTrue(delete_custom_macro("EMA-TEST01", db_path=db))
+            self.assertEqual(len(list_custom_macros(tenant_id="TENANT-KBAT", db_path=db)), 0)
 
 
 if __name__ == "__main__":

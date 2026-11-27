@@ -1,6 +1,6 @@
 {
   "name": "panelcraft-ai-mobile",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "PanelCraft AI Android APK / AAB mobile & tablet packaging via Capacitor",
   "scripts": {
     "cap:add:android": "npx cap add android",

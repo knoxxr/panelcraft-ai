@@ -104,6 +104,11 @@ def export_eplan_aml(design: ComputedDesign) -> str:
     _add_attr(panel_el, "EnclosurePartNumber", s.enclosure_part)
     _add_attr(panel_el, "EnclosureDimensions", s.enclosure_size_mm)
     _add_attr(panel_el, "TotalHeatDissipation", str(s.total_heat_loss_w), "W")
+    _add_attr(panel_el, "IEC60909_Ik3Main", str(s.ik3_main_ka), "kA")
+    _add_attr(panel_el, "IEC60909_PeakIp", str(s.ip_peak_ka), "kA")
+    if s.thermal_analysis:
+        _add_attr(panel_el, "IEC60890_EffectiveSurface", str(s.thermal_analysis.effective_surface_m2), "m2")
+        _add_attr(panel_el, "IEC60890_CoolingMode", s.thermal_analysis.cooling_mode)
 
     # 1. Electrical Devices & BOM Parts
     dev_group = ET.SubElement(panel_el, "InternalElement", {"Name": "ElectricalDevices", "ID": _uid()})
@@ -116,12 +121,13 @@ def export_eplan_aml(design: ComputedDesign) -> str:
         _add_attr(ie, "Quantity", str(b.quantity), b.unit)
         _add_attr(ie, "LifecycleStatus", b.lifecycle_status)
 
-    # 2. Functional Power Loads & Wiring Specs (with EPLAN Macro mapping)
+    # 2. Functional Power Loads & Wiring Specs (with EPLAN Macro & Variant mapping)
     loads_group = ET.SubElement(panel_el, "InternalElement", {"Name": "PowerCircuits", "ID": _uid()})
     for c in design.load_calculations:
         ie = ET.SubElement(loads_group, "InternalElement", {"Name": c.tag, "ID": _uid()})
         _add_attr(ie, "IECDeviceTag", c.iec_device_tag)
         _add_attr(ie, "EPLANMacro", c.eplan_macro)
+        _add_attr(ie, "EPLANMacroVariant", c.eplan_macro_variant)
         _add_attr(ie, "Description", c.name)
         _add_attr(ie, "RatedCurrent", str(c.rated_current_a), "A")
         _add_attr(ie, "WireCrossSection", str(c.wire_sq), "mm2")
@@ -314,14 +320,25 @@ th{{background:#f1f5f9}}code{{font-family:monospace;font-size:12px}}.meta{{backg
 </body></html>"""
 
 
-def export_full_package_zip(design: ComputedDesign) -> bytes:
+def export_full_package_zip(design: ComputedDesign, custom_macros: list | None = None) -> bytes:
     """Bundle all synchronized engineering deliverables into a single downloadable ZIP archive."""
     import zipfile
+    from backend.engine.macros import generate_eplan_ema_xml
+
     pid = design.project.id
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(f"EPLAN/{pid}_EPLAN.aml", export_eplan_aml(design).encode("utf-8"))
         zf.writestr(f"EPLAN/{pid}_EPLAN_Parts.csv", export_eplan_parts_csv(design).encode("utf-8"))
+        # Export one EPLAN .ema Window Macro XML per distinct macro used in the project
+        seen_macros: set[str] = set()
+        for c in design.load_calculations:
+            if c.eplan_macro not in seen_macros:
+                seen_macros.add(c.eplan_macro)
+                ema_fname, ema_xml = generate_eplan_ema_xml(
+                    design.project, design.load_calculations, custom_macros=custom_macros, target_macro_file=c.eplan_macro
+                )
+                zf.writestr(f"EPLAN/macros/{ema_fname}", ema_xml.encode("utf-8"))
         zf.writestr(f"PLC/{pid}_PLCopen.xml", export_plcopen_xml(design).encode("utf-8"))
         zf.writestr(f"PLC/{pid}_MainControl.st", design.plc_st_code.encode("utf-8"))
         zf.writestr(f"PLC/{pid}_IO_Map.csv", export_io_csv(design).encode("utf-8"))

@@ -77,8 +77,18 @@ export const api = {
   createTenant: (tenant) =>
     request("/api/tenants", { method: "POST", body: JSON.stringify(tenant) }),
 
-  // Standard Circuit Macro Library & Audit Logs
+  // Standard & Company EPLAN .ema Circuit Macro Library & Audit Logs
   listMacros: () => request("/api/macros"),
+  listCustomMacros: (tenantId = null) =>
+    request(tenantId ? `/api/macros/custom?tenant_id=${encodeURIComponent(tenantId)}` : "/api/macros/custom"),
+  saveCustomMacro: (payload) =>
+    request("/api/macros/custom", { method: "POST", body: JSON.stringify(payload) }),
+  deleteCustomMacro: (macroId) =>
+    request(`/api/macros/custom/${encodeURIComponent(macroId)}`, { method: "DELETE" }),
+  exportEmaUrl: (projectId, macroFile = null) =>
+    macroFile
+      ? `/api/projects/${encodeURIComponent(projectId)}/export/eplan_ema?macro_file=${encodeURIComponent(macroFile)}`
+      : `/api/projects/${encodeURIComponent(projectId)}/export/eplan_ema`,
   applyMacro: (projectId, macroId) =>
     request(`/api/projects/${encodeURIComponent(projectId)}/macros/${encodeURIComponent(macroId)}`, {
       method: "POST",

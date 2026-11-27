@@ -153,8 +153,67 @@ def run_design_verification(
                     )
                 )
 
-    # 7. Thermal Headroom Check (THM-001)
-    if summary.total_heat_loss_w > 500 and project.settings.ambient_temp_c >= 40:
+    # 7. IEC 60909 Short-Circuit Breaking Capacity Check (ERC-005)
+    if summary.ik3_main_ka > 0 and summary.main_breaker_icu_ka < summary.ik3_main_ka:
+        checks.append(
+            RuleCheckItem(
+                rule_id="ERC-005",
+                severity="ERROR",
+                category="ERC",
+                standard_ref="IEC 60909-0 / IEC 60947-2",
+                target_tag="-Q0",
+                title="주 차단기 정격차단용량(Icu) 부족 (IEC 60909)",
+                detail=f"예상 3상 단락전류 I''k3={summary.ik3_main_ka}kA(피크 {summary.ip_peak_ka}kA)가 주 차단기({summary.main_breaker_part}) Icu={summary.main_breaker_icu_ka}kA를 초과합니다.",
+                recommendation="고차단용량(H/L 타입, Icu ≥ 36~50kA) MCCB로 상향하거나 한류형 퓨즈/백업 보호를 적용하세요.",
+            )
+        )
+    for sc in summary.selectivity_checks:
+        if not sc.breaking_ok:
+            checks.append(
+                RuleCheckItem(
+                    rule_id="ERC-005",
+                    severity="ERROR",
+                    category="ERC",
+                    standard_ref="IEC 60909-0 / IEC 60947-2",
+                    target_tag=sc.tag,
+                    title=f"분기 차단기 차단용량 부족 ({sc.downstream_part})",
+                    detail=f"{sc.name} 분기점 단락전류 I''k3={sc.ik3_branch_ka}kA > 분기 차단기 Icu={sc.downstream_icu_ka}kA.",
+                    recommendation="분기 차단기를 상위 차단용량 모델로 교체하거나 상위 차단기와 캐스케이딩 인증 조합을 적용하세요.",
+                )
+            )
+        elif sc.coordination_status == "NON_SELECTIVE":
+            checks.append(
+                RuleCheckItem(
+                    rule_id="ERC-006",
+                    severity="WARNING",
+                    category="ERC",
+                    standard_ref="IEC 60364-5-53 / 보호협조(Selectivity)",
+                    target_tag=sc.tag,
+                    title="주-분기 차단기 선택적 보호협조(Selectivity) 미흡",
+                    detail=f"주 차단기({sc.upstream_rating_a}AT) 대비 분기({sc.downstream_rating_a}AT) 정격비={sc.selectivity_ratio}x (<1.6x). 분기 사고 시 주 차단기 동시 트립 위험이 있습니다.",
+                    recommendation="주 차단기 정격 프레임 상향, 전자식 트립(LSIG) 지연 설정, 또는 부하 분산을 검토하세요.",
+                )
+            )
+
+    # 8. IEC 60890 Thermal Headroom Check (THM-001)
+    thm = summary.thermal_analysis
+    if thm and thm.predicted_uncooled_temp_c > project.settings.max_internal_temp_c:
+        checks.append(
+            RuleCheckItem(
+                rule_id="THM-001",
+                severity="WARNING" if thm.cooling_mode == "PANEL_AC" else "INFO",
+                category="THERMAL",
+                standard_ref="IEC 60890 / IEC 61439-1",
+                target_tag="=A1+P1",
+                title=f"IEC 60890 열해석: 강제 냉각 필수 ({thm.cooling_mode})",
+                detail=(
+                    f"유효 방열면적 Ae={thm.effective_surface_m2}m², 자연방열 {thm.natural_dissipation_w}W 대비 총 발열 {summary.total_heat_loss_w}W. "
+                    f"미냉각 시 내부온도 {thm.predicted_uncooled_temp_c}°C 예상 → {thm.recommended_cooling_part}({thm.recommended_cooling_capacity_w}W) 적용 시 {thm.predicted_cooled_temp_c}°C 유지."
+                ),
+                recommendation="선정된 냉각장치(필터팬 또는 Blue e+ 판넬 에어컨)의 흡·배기 동선과 드라이브 상·하 100mm 이격거리를 유지하세요.",
+            )
+        )
+    elif summary.total_heat_loss_w > 500 and project.settings.ambient_temp_c >= 40:
         checks.append(
             RuleCheckItem(
                 rule_id="THM-001",
