@@ -1,0 +1,13 @@
+{
+  "appId": "ai.panelcraft.app",
+  "appName": "PanelCraft AI",
+  "webDir": "../frontend",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#f3f5f9"
+  }
+}

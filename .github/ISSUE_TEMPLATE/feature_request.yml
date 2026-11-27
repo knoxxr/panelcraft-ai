@@ -1,0 +1,32 @@
+name: Feature Request
+description: Propose a new CAD/PLC export format, vendor catalog, electrical rule, or AI workflow
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Engineering Module
+      options:
+        - Electrical Sizing & Vendor BOM
+        - PLC I/O & IEC 61131-3 ST Code
+        - Schematics / EPLAN AML / AutoCAD DXF
+        - 2D Mounting Plate Layout & Thermal
+        - AI Copilot / External & Local LLM
+        - Desktop / Android Packaging & Auto-Update
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Engineering Workflow Need
+      description: What control panel design problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Share expected inputs, outputs, standards (IEC/KS/UL), or vendor formats.
+    validations:
+      required: false

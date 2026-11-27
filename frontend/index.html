@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PanelCraft AI — Control Panel Design Automation</title>
+  <meta name="description" content="Industrial electrical & control panel SSOT engineering platform: electrical sizing, BOM, PLC I/O & ST interlocks, IEC 61082 schematics, 2D layout, EPLAN AML, auto-updates, and cross-platform distribution." />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="icon" href="/icons/favicon.ico" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/styles/app.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Workspace Header -->
+    <header class="topbar" role="banner">
+      <div class="topbar-left">
+        <div class="brand">
+          <img class="brand-icon" src="/icons/icon-64.png" alt="PanelCraft AI Logo" width="36" height="36" />
+          <div class="brand-text">
+            <div style="display:flex;align-items:center;gap:6px">
+              <h1 class="brand-title">PanelCraft AI</h1>
+              <button id="btnOpenUpdate" class="version-pill mono" type="button" title="Version & Auto-Update">v0.3.0</button>
+            </div>
+            <span class="brand-sub" data-i18n="brandSub">SSOT Control Panel Engineering</span>
+          </div>
+        </div>
+        <div class="divider-v"></div>
+        <label class="selector-group" for="tenantSelect">
+          <span class="selector-label" data-i18n="org">Org</span>
+          <select id="tenantSelect" class="select-compact" style="max-width:175px"></select>
+        </label>
+        <button id="btnNewTenant" class="btn btn-secondary btn-sm" type="button" title="Add Manufacturer Organization">+ Org</button>
+        <label class="selector-group" for="projectSelect">
+          <span class="selector-label" data-i18n="project">Project</span>
+          <select id="projectSelect" class="select-compact"></select>
+        </label>
+      </div>
+
+      <div class="topbar-right">
+        <label class="selector-group" for="quickVendorSelect">
+          <span class="selector-label" data-i18n="vendor">Vendor</span>
+          <select id="quickVendorSelect" class="select-compact">
+            <option value="LS Electric">LS Electric</option>
+            <option value="Schneider Electric">Schneider Electric</option>
+            <option value="Siemens">Siemens</option>
+            <option value="Mitsubishi Electric">Mitsubishi Electric</option>
+            <option value="ABB">ABB</option>
+            <option value="Fuji Electric">Fuji Electric</option>
+            <option value="Omron">Omron</option>
+          </select>
+        </label>
+
+        <label class="selector-group" for="quickPlcSelect">
+          <span class="selector-label" data-i18n="plc">PLC</span>
+          <select id="quickPlcSelect" class="select-compact">
+            <option value="Mitsubishi Electric">Mitsubishi iQ-R</option>
+            <option value="LS Electric">LS XGT (XGI)</option>
+            <option value="Siemens">Siemens S7-1500</option>
+            <option value="Rockwell Automation">Rockwell ControlLogix</option>
+            <option value="Omron">Omron Sysmac NX</option>
+            <option value="Beckhoff">Beckhoff TwinCAT</option>
+          </select>
+        </label>
+
+        <!-- EN / KO Language Switcher (Default: EN) -->
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button id="btnLangEn" class="lang-btn active" type="button">EN</button>
+          <button id="btnLangKo" class="lang-btn" type="button">KO</button>
+        </div>
+
+        <button id="btnOpenLlmConfig" class="btn btn-secondary btn-sm" type="button" title="Cloud / Local LLM Gateway">
+          <span data-i18n="llmBtnPrefix">LLM</span>: <span id="llmStatusLabel" class="mono">Built-in</span>
+        </button>
+
+        <button id="btnOpenCopilot" class="btn btn-primary btn-sm" type="button" data-i18n="aiDraftBtn">
+          AI Spec · RFP Draft
+        </button>
+
+        <div class="export-dropdown">
+          <button id="btnExportMenu" class="btn btn-secondary btn-sm" type="button" aria-expanded="false" data-i18n="exportBtn">
+            Export ▾
+          </button>
+          <div id="exportMenuList" class="dropdown-menu" hidden>
+            <a data-export="package_zip" href="#" style="font-weight:700;color:var(--accent-blue)">Full Engineering Package (.zip)</a>
+            <a data-export="dossier_html" href="#">Printable Engineering Report (.html)</a>
+            <hr style="border:none;border-top:1px solid var(--border-subtle);margin:4px 0" />
+            <a data-export="eplan_aml" href="#" data-i18n="expEplan">EPLAN AML / XML (.aml)</a>
+            <a data-export="eplan_parts_csv" href="#">EPLAN Parts List (.csv)</a>
+            <a data-export="plcopen_xml" href="#">PLCopen TC6 XML (.xml)</a>
+            <a data-export="dxf" href="#" data-i18n="expDxf">Schematic AutoCAD (.dxf)</a>
+            <a data-export="layout_dxf" href="#" data-i18n="expLayoutDxf">2D Mounting Plate (.dxf)</a>
+            <a data-export="bom_csv" href="#" data-i18n="expBomCsv">Unified BOM (.csv)</a>
+            <a data-export="io_csv" href="#" data-i18n="expIoCsv">PLC I/O Schedule (.csv)</a>
+            <a data-export="terminals_csv" href="#" data-i18n="expTermCsv">Terminals &amp; Wire List (.csv)</a>
+            <a data-export="wire_labels_csv" href="#">Wire Markers &amp; Labels (.csv)</a>
+            <a data-export="plc_st" href="#" data-i18n="expPlcSt">PLC IEC 61131-3 ST (.st)</a>
+            <a data-export="fat_md" href="#" data-i18n="expFatMd">FAT / SAT Checklist (.md)</a>
+          </div>
+        </div>
+
+        <div class="export-dropdown">
+          <button id="btnCommunityMenu" class="btn btn-secondary btn-sm" type="button" aria-expanded="false" data-i18n="communityBtn">
+            Community ▾
+          </button>
+          <div id="communityMenuList" class="dropdown-menu" hidden>
+            <a id="lnkGhBug" href="#" target="_blank" rel="noopener" data-i18n="ghReportBug">Report Bug (GitHub Issues)</a>
+            <a id="lnkGhFeature" href="#" target="_blank" rel="noopener" data-i18n="ghFeatureReq">Request Feature (GitHub Issues)</a>
+            <a id="lnkGhDiscuss" href="#" target="_blank" rel="noopener" data-i18n="ghDiscussions">Community Q&amp;A (GitHub Discussions)</a>
+            <a id="lnkGhReleases" href="#" target="_blank" rel="noopener" data-i18n="ghReleases">Releases &amp; Installers</a>
+            <hr style="border:none;border-top:1px solid var(--border-subtle);margin:4px 0" />
+            <a id="lnkCheckUpdate" href="#" data-i18n="checkUpdates">Version &amp; Auto-Update...</a>
+          </div>
+        </div>
+
+        <button id="btnOpenAuth" class="btn btn-secondary btn-sm" type="button" title="SaaS Authentication & RBAC Role">
+          <span id="authBadgeLabel">Account (Demo)</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Body: Left Rail + Content Canvas -->
+    <div class="workspace-body">
+      <nav class="sidebar" aria-label="Engineering Workflow">
+        <div class="nav-section-title" data-i18n="navSection">Engineering Workflow</div>
+        <button class="nav-item active" data-tab="loads" id="nav-loads" type="button">
+          <span class="nav-step">01</span>
+          <span class="nav-label" data-i18n="navLoads">Specs · Excel Import</span>
+        </button>
+        <button class="nav-item" data-tab="bom" id="nav-bom" type="button">
+          <span class="nav-step">02</span>
+          <span class="nav-label" data-i18n="navBom">Sizing · BOM</span>
+        </button>
+        <button class="nav-item" data-tab="io" id="nav-io" type="button">
+          <span class="nav-step">03</span>
+          <span class="nav-label" data-i18n="navIo">PLC · I/O · Interlock</span>
+          <span class="nav-badge" id="badgeIoCount">0</span>
+        </button>
+        <button class="nav-item" data-tab="schematic" id="nav-schematic" type="button">
+          <span class="nav-step">04</span>
+          <span class="nav-label" data-i18n="navSchematic">Schematics · Terminals</span>
+        </button>
+        <button class="nav-item" data-tab="layout" id="nav-layout" type="button">
+          <span class="nav-step">05</span>
+          <span class="nav-label" data-i18n="navLayout">2D Panel Layout</span>
+        </button>
+        <button class="nav-item" data-tab="verify" id="nav-verify" type="button">
+          <span class="nav-step">06</span>
+          <span class="nav-label" data-i18n="navVerify">Verify · AI Review</span>
+          <span class="nav-badge" id="badgeRuleStatus">OK</span>
+        </button>
+        <button class="nav-item" data-tab="revisions" id="nav-revisions" type="button">
+          <span class="nav-step">07</span>
+          <span class="nav-label" data-i18n="navRevisions">Versions · ECN</span>
+        </button>
+
+        <div class="sidebar-footer">
+          <div class="ssot-status">
+            <span class="status-dot" id="syncDot"></span>
+            <span id="syncText" data-i18n="syncDone">SSOT Model Synchronized</span>
+          </div>
+          <p class="sidebar-hint" data-i18n="sidebarHint">Any change to specs or catalog updates sizing, BOM, I/O, schematics, and 2D layout immediately.</p>
+        </div>
+      </nav>
+
+      <main class="main-canvas" id="mainCanvas" role="main">
+        <!-- Auto-Update Available Banner (shown dynamically when newer release exists) -->
+        <div id="updateBanner" class="inspector-bar" hidden>
+          <span id="updateBannerText"></span>
+          <button id="btnBannerOpenUpdate" class="btn btn-primary btn-sm" type="button">View Release</button>
+        </div>
+
+        <!-- Compact Live Telemetry Strip -->
+        <section class="summary-strip" id="summaryStrip" aria-label="Key Engineering Telemetry"></section>
+
+        <!-- Dynamic Active Tab View -->
+        <section class="view-container" id="viewContainer"></section>
+      </main>
+    </div>
+  </div>
+
+  <!-- AI Copilot Spec & RFP PDF Upload Modal -->
+  <div class="modal-backdrop" id="copilotModal" hidden role="dialog" aria-modal="true" aria-labelledby="copilotModalTitle">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <div>
+          <h2 id="copilotModalTitle" data-i18n="copilotTitle">AI Spec &amp; RFP PDF → Control Panel Draft Generator</h2>
+          <p class="modal-sub" data-i18n="copilotSub">Upload a customer RFP (PDF/TXT) or describe requirements to generate loads, safety PL, I/O, schematics, and 2D layout.</p>
+        </div>
+        <button id="btnCloseCopilot" class="btn-icon" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="upload-box">
+          <div>
+            <strong style="font-size:13px" data-i18n="copilotUploadTitle">Upload RFP Document (PDF / TXT / MD)</strong>
+            <p style="margin:2px 0 0;font-size:12px;color:var(--ink-muted)" data-i18n="copilotUploadSub">Extracts text automatically and parses via your configured External/Local LLM or Built-in engine.</p>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="copilotPdfFile" type="file" accept=".pdf,.txt,.md" style="max-width:210px;font-size:12px" />
+            <button id="btnParsePdf" class="btn btn-secondary btn-sm" type="button" data-i18n="btnParsePdf">Analyze PDF</button>
+          </div>
+        </div>
+
+        <div class="preset-chips">
+          <span class="chip-label">Presets:</span>
+          <button type="button" class="chip-btn" data-preset="3P 380V 60Hz, Inverter Conveyor 1.5kW 4 units, Lift Servo 750W 2 axes, Preheat Heater 3kW 1 unit, Solenoid Valve 12 ea, Proximity Sensor 16 ea, E-Stop 2 units PLd">Conveyor Line</button>
+          <button type="button" class="chip-btn" data-preset="3P 440V, Schneider, Siemens PLC, Circulation Pump Inverter 3.7kW 2 units, Blower Motor 5.5kW 1 unit, Drying Heater 6kW 2 units, Valves 16 ea, Sensors 24 ea, E-Stop 3 units PLe">Chemical Process</button>
+          <button type="button" class="chip-btn" data-preset="3상 380V, LS 산전, 갠트리 서보 1.5kW 3축, 컨베이어 인버터 0.75kW 2대, 솔레노이드 8개, 센서 14개, 비상정지 2개소 PLd">Gantry Cell (KR)</button>
+        </div>
+
+        <label class="field-label" for="copilotProjectName" data-i18n="lblProjectName">Project Name</label>
+        <input id="copilotProjectName" class="input-full" type="text" value="New Automation Control Panel" />
+
+        <label class="field-label" for="copilotPrompt">Specification Prompt (EN / KO)</label>
+        <textarea id="copilotPrompt" class="textarea-full" rows="4" placeholder="e.g., 3P 380V, 1.5kW Inverter Conveyor 4 units, 750W Servo 2 axes, Solenoids 12 ea, Sensors 16 ea, E-Stop 2 units PLd"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button id="btnCancelCopilot" class="btn btn-secondary" type="button" data-i18n="btnCancel">Cancel</button>
+        <button id="btnRunCopilot" class="btn btn-primary" type="button" data-i18n="btnRunCopilot">Generate Project Draft</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- External / Local LLM Gateway Configuration Modal -->
+  <div class="modal-backdrop" id="llmModal" hidden role="dialog" aria-modal="true" aria-labelledby="llmModalTitle">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <div>
+          <h2 id="llmModalTitle" data-i18n="llmTitle">External &amp; On-Premise Local LLM Gateway Settings</h2>
+          <p class="modal-sub" data-i18n="llmSub">Configure AI engine for RFP PDF parsing and natural-language ST interlocks. Electrical calculations remain 100% deterministic.</p>
+        </div>
+        <button id="btnCloseLlm" class="btn-icon" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field-group">
+          <label class="field-label" for="llmProvider">LLM Provider Mode</label>
+          <select id="llmProvider" class="input">
+            <option value="builtin">Offline Built-in Engine (Zero API · 100% Local Deterministic Parser)</option>
+            <option value="ollama">On-Premise Local LLM — Ollama (Air-Gapped Security)</option>
+            <option value="openai_compat">External / Private OpenAI-Compatible API (OpenAI / vLLM / LiteLLM)</option>
+          </select>
+        </div>
+
+        <div class="grid-2" id="llmEndpointFields">
+          <div class="field-group">
+            <label class="field-label" for="llmBaseUrl">Endpoint Base URL</label>
+            <input id="llmBaseUrl" class="input mono" placeholder="http://localhost:11434 or https://api.openai.com/v1" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="llmModel">Model Name</label>
+            <input id="llmModel" class="input mono" placeholder="qwen2.5:14b / gpt-4o-mini / llama3.1" />
+          </div>
+        </div>
+
+        <div class="field-group" id="llmApiKeyField">
+          <label class="field-label" for="llmApiKey">API Key (Optional for local servers)</label>
+          <input id="llmApiKey" class="input mono" type="password" placeholder="sk-..." />
+        </div>
+
+        <div id="llmTestResult" class="copilot-preview" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnTestLlm" class="btn btn-secondary" type="button" data-i18n="btnTestLlm">Test Connection</button>
+        <button id="btnSaveLlm" class="btn btn-primary" type="button" data-i18n="btnSave">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- App Version, Auto-Update & GitHub Community Modal -->
+  <div class="modal-backdrop" id="updateModal" hidden role="dialog" aria-modal="true" aria-labelledby="updateModalTitle">
+    <div class="modal-panel" style="max-width:720px">
+      <div class="modal-header">
+        <div>
+          <h2 id="updateModalTitle" data-i18n="updateTitle">Version Management, Auto-Updater &amp; GitHub Community</h2>
+          <p class="modal-sub" data-i18n="updateSub">Check GitHub Releases for new desktop/Android installers, view changelog, or open GitHub Issues &amp; Discussions.</p>
+        </div>
+        <button id="btnCloseUpdate" class="btn-icon" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="updateRuntimeBar" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+
+        <div class="grid-2">
+          <div class="field-group">
+            <label class="field-label" for="updGithubRepo">GitHub Repository (owner/repo)</label>
+            <input id="updGithubRepo" class="input mono" placeholder="panelcraft-ai/panelcraft-ai" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="updChannel">Release Channel</label>
+            <select id="updChannel" class="input">
+              <option value="stable">Stable (Recommended)</option>
+              <option value="beta">Beta / Pre-release</option>
+            </select>
+          </div>
+        </div>
+
+        <label style="display:inline-flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <input id="updAutoCheck" type="checkbox" checked />
+          Automatically check GitHub Releases on application startup
+        </label>
+
+        <div id="updateCheckOutput" class="copilot-preview" hidden></div>
+
+        <div>
+          <strong style="font-size:13px">GitHub Community &amp; Multi-Platform Releases</strong>
+          <div id="updateCommunityLinks" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
+        </div>
+
+        <div>
+          <strong style="font-size:13px">Release Changelog (VERSION History)</strong>
+          <div id="changelogBox" class="copilot-preview" style="margin-top:6px;max-height:170px;overflow-y:auto"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnSaveUpdateCfg" class="btn btn-secondary" type="button" data-i18n="btnSaveUpdateCfg">Save Update Config</button>
+        <button id="btnCheckUpdateNow" class="btn btn-primary" type="button" data-i18n="btnCheckNow">Check for Updates Now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Manufacturer Organization Modal (Multi-Tenant SaaS) -->
+  <div class="modal-backdrop" id="tenantModal" hidden role="dialog" aria-modal="true" aria-labelledby="tenantModalTitle">
+    <div class="modal-panel" style="max-width:560px">
+      <div class="modal-header">
+        <div>
+          <h2 id="tenantModalTitle">Create Manufacturer Organization Workspace</h2>
+          <p class="modal-sub">Each manufacturer gets an isolated workspace with its own projects, standard component DB, and EPLAN title-block identity.</p>
+        </div>
+        <button id="btnCloseTenant" class="btn-icon" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field-group">
+          <label class="field-label" for="tntName">Company / Manufacturer Name</label>
+          <input id="tntName" class="input" placeholder="e.g., Global Robotics OEM Corp." />
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="tntIndustry">Industry Sector</label>
+          <input id="tntIndustry" class="input" value="Factory Automation & Equipment OEM" />
+        </div>
+        <div class="grid-2">
+          <div class="field-group">
+            <label class="field-label" for="tntStandard">Default Standard</label>
+            <select id="tntStandard" class="input">
+              <option value="IEC 60204-1">IEC 60204-1</option>
+              <option value="KS C IEC 60364">KS C IEC 60364</option>
+              <option value="UL 508A">UL 508A (North America)</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="tntVendor">Default Electrical Vendor</label>
+            <select id="tntVendor" class="input">
+              <option value="LS Electric">LS Electric</option>
+              <option value="Schneider Electric">Schneider Electric</option>
+              <option value="Siemens">Siemens</option>
+              <option value="Mitsubishi Electric">Mitsubishi Electric</option>
+              <option value="ABB">ABB</option>
+              <option value="Fuji Electric">Fuji Electric</option>
+              <option value="Omron">Omron</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="tntPlc">Default PLC Platform</label>
+          <select id="tntPlc" class="input">
+            <option value="Mitsubishi Electric">Mitsubishi Electric (iQ-R)</option>
+            <option value="LS Electric">LS Electric (XGT)</option>
+            <option value="Siemens">Siemens (S7-1500)</option>
+            <option value="Rockwell Automation">Rockwell Automation (ControlLogix)</option>
+            <option value="Omron">Omron (Sysmac NX)</option>
+            <option value="Beckhoff">Beckhoff (TwinCAT)</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnCancelTenant" class="btn btn-secondary" type="button">Cancel</button>
+        <button id="btnSaveTenant" class="btn btn-primary" type="button">Create Organization</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SaaS Authentication, RBAC Roles & DB Engine Modal -->
+  <div class="modal-backdrop" id="authModal" hidden role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
+    <div class="modal-panel" style="max-width:600px">
+      <div class="modal-header">
+        <div>
+          <h2 id="authModalTitle">SaaS Account, RBAC Permissions &amp; Cloud DB</h2>
+          <p class="modal-sub">Sign in to enforce role-based access control: only Reviewer/Admin can Release revisions; Viewer is read-only.</p>
+        </div>
+        <button id="btnCloseAuth" class="btn-icon" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="authStatusBox" class="copilot-preview"></div>
+
+        <div class="preset-chips">
+          <span class="chip-label">1-Click Demo Role:</span>
+          <button type="button" class="chip-btn" data-demo-login="admin@panelcraft.ai|admin1234">Admin</button>
+          <button type="button" class="chip-btn" data-demo-login="reviewer@panelcraft.ai|review1234">Lead Reviewer</button>
+          <button type="button" class="chip-btn" data-demo-login="designer@panelcraft.ai|design1234">Controls Designer</button>
+          <button type="button" class="chip-btn" data-demo-login="viewer@panelcraft.ai|view1234">Read-Only Viewer</button>
+        </div>
+
+        <div class="grid-2">
+          <div class="field-group">
+            <label class="field-label" for="authEmail">Email</label>
+            <input id="authEmail" class="input" type="email" placeholder="designer@panelcraft.ai" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="authPassword">Password</label>
+            <input id="authPassword" class="input" type="password" placeholder="••••••••" />
+          </div>
+        </div>
+
+        <div id="authRegisterExtra" class="grid-2" hidden>
+          <div class="field-group">
+            <label class="field-label" for="authFullName">Full Name</label>
+            <input id="authFullName" class="input" placeholder="Alex Kim" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="authRole">Role (RBAC)</label>
+            <select id="authRole" class="input">
+              <option value="designer">Designer (Edit + Draft/Review)</option>
+              <option value="reviewer">Reviewer (Approve/Release + Rollback)</option>
+              <option value="admin">Admin (Full Org &amp; Settings)</option>
+              <option value="viewer">Viewer (Read-Only)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnToggleReg" class="btn btn-secondary btn-sm" type="button">Register New Account</button>
+        <button id="btnLogout" class="btn btn-danger-ghost" type="button" hidden>Sign Out</button>
+        <button id="btnAuthSubmit" class="btn btn-primary" type="button">Sign In</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+name: Bug Report
+description: Report a calculation, schematic, EPLAN AML, layout, or UI bug in PanelCraft AI
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: PanelCraft AI Version
+      placeholder: "v0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform / Installer
+      options:
+        - Windows (.exe / .msi)
+        - macOS (.dmg)
+        - Linux (.AppImage / .deb)
+        - Android (.apk / PWA)
+        - Web / Python Local Server
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the issue and expected electrical/control engineering behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Open project / import Excel load table
+        2. Switch vendor or PLC type
+        3. Observe error...
+    validations:
+      required: true

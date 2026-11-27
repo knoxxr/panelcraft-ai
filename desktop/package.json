@@ -1,0 +1,23 @@
+{
+  "name": "panelcraft-ai-desktop",
+  "productName": "PanelCraft AI",
+  "version": "0.6.0",
+  "description": "Industrial electrical & control panel SSOT design automation desktop application",
+  "main": "main.js",
+  "author": "PanelCraft AI Contributors",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win --config electron-builder.yml",
+    "dist:mac": "electron-builder --mac --config electron-builder.yml",
+    "dist:linux": "electron-builder --linux --config electron-builder.yml",
+    "dist:all": "electron-builder -mwl --config electron-builder.yml"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  }
+}

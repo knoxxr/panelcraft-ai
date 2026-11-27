@@ -1,0 +1,105 @@
+name: Multi-Platform Release (Windows, macOS, Linux, Android)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-desktop:
+    name: Build Desktop (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            dist_cmd: dist:win
+          - os: macos-latest
+            dist_cmd: dist:mac
+          - os: ubuntu-latest
+            dist_cmd: dist:linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Python dependencies & PyInstaller
+        run: pip install fastapi uvicorn pydantic python-multipart pyinstaller
+
+      - name: Bundle embedded Python backend binary
+        run: pyinstaller --clean --distpath dist/backend packaging/panelcraft-backend.spec
+
+      - name: Install Desktop (Electron) dependencies & build installer
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm install
+          npm run ${{ matrix.dist_cmd }}
+
+      - name: Upload Desktop release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: |
+            dist/desktop/*.exe
+            dist/desktop/*.msi
+            dist/desktop/*.dmg
+            dist/desktop/*.AppImage
+            dist/desktop/*.deb
+            dist/desktop/*.yml
+          if-no-files-found: warn
+
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: android-actions/setup-android@v3
+
+      - name: Build Capacitor Android APK
+        working-directory: mobile
+        run: |
+          npm install
+          npx cap add android || true
+          npx cap sync android
+          cd android && ./gradlew assembleDebug
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: mobile/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
+
+  publish-release:
+    needs: [build-desktop, build-android]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+      - name: Create GitHub Release with Multi-Platform Installers
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-artifacts/*
