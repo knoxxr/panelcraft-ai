@@ -4,7 +4,11 @@
   "version": "0.7.0",
   "description": "Industrial electrical & control panel SSOT design automation desktop application",
   "main": "main.js",
-  "author": "PanelCraft AI Contributors",
+  "homepage": "https://github.com/knoxxr/panelcraft-ai",
+  "author": {
+    "name": "PanelCraft AI Contributors",
+    "email": "dev@panelcraft.ai"
+  },
   "license": "MIT",
   "scripts": {
     "start": "electron .",

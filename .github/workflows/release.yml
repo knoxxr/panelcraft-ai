@@ -40,11 +40,9 @@ jobs:
 
       - name: Install Desktop (Electron) dependencies & build installer
         working-directory: desktop
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           npm install
-          npm run ${{ matrix.dist_cmd }}
+          npm run ${{ matrix.dist_cmd }} -- --publish never
 
       - name: Upload Desktop release artifacts
         uses: actions/upload-artifact@v4
@@ -52,7 +50,6 @@ jobs:
           name: desktop-${{ matrix.os }}
           path: |
             dist/desktop/*.exe
-            dist/desktop/*.msi
             dist/desktop/*.dmg
             dist/desktop/*.AppImage
             dist/desktop/*.deb
@@ -67,15 +64,15 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - uses: android-actions/setup-android@v3
 
       - name: Build Capacitor Android APK
         working-directory: mobile
         run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
           npm install
           npx cap add android || true
           npx cap sync android

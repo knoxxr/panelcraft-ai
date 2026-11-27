@@ -27,7 +27,7 @@ win:
   target:
     - target: nsis
       arch: [x64]
-    - target: msi
+    - target: portable
       arch: [x64]
 
 nsis:
@@ -45,6 +45,7 @@ mac:
 
 linux:
   icon: build/icon.png
+  maintainer: PanelCraft AI Contributors <dev@panelcraft.ai>
   category: Development;Engineering
   target:
     - target: AppImage
